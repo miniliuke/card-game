@@ -148,6 +148,24 @@ struct ReserveMarketButton {
     slot: usize,
 }
 
+#[derive(Component)]
+struct SupplyButton(GemColor);
+
+#[derive(Component)]
+struct SupplyX2Button(GemColor);
+
+#[derive(Component)]
+struct SupplyCountText(GemColor);
+
+#[derive(Component)]
+struct ConfirmTake3Button;
+
+#[derive(Component)]
+struct ClearSelectionButton;
+
+#[derive(Component)]
+struct SelectionHudText;
+
 #[derive(Resource, Default)]
 struct AnimationCounts {
     flying: usize,
@@ -506,6 +524,8 @@ fn spawn_market(parent: &mut ChildSpawnerCommands, model: &BattleModel) {
             for level in [CardLevel::Level3, CardLevel::Level2, CardLevel::Level1] {
                 spawn_market_row(market, level, model);
             }
+            spawn_token_supply(market, model);
+            spawn_selection_hud(market);
         });
 }
 
@@ -701,6 +721,203 @@ fn spawn_card_button(
                     Text::new("R"),
                     TextFont { font_size: 9.0, ..default() },
                     TextColor(GOLD_BRIGHT),
+                ));
+            });
+        });
+}
+
+fn spawn_token_supply(parent: &mut ChildSpawnerCommands, model: &BattleModel) {
+    parent
+        .spawn((
+            Node {
+                width: percent(100),
+                height: px(82),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::SpaceBetween,
+                padding: UiRect::all(px(9)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(10)),
+                column_gap: px(8),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.04, 0.046, 0.064, 0.88)),
+            BorderColor::all(OUTLINE),
+        ))
+        .with_children(|supply| {
+            supply.spawn((
+                Text::new("CURRENCY"),
+                TextFont { font_size: 9.0, ..default() },
+                TextColor(MUTED),
+                Node { width: px(58), ..default() },
+            ));
+            // 5 normal color buttons
+            for color in GemColor::NORMAL {
+                spawn_supply_button(supply, color, model);
+            }
+            // Gold info (no button)
+            supply
+                .spawn((
+                    Node {
+                        width: px(58),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                ))
+                .with_children(|gold| {
+                    gold.spawn((
+                        Text::new("GOLD"),
+                        TextFont { font_size: 8.0, ..default() },
+                        TextColor(GOLD),
+                    ));
+                    gold.spawn((
+                        Text::new(format!("x{}", model.0.bank.tokens.gold)),
+                        TextFont { font_size: 14.0, ..default() },
+                        TextColor(CREAM),
+                    ));
+                });
+        });
+}
+
+fn spawn_supply_button(parent: &mut ChildSpawnerCommands, color: GemColor, model: &BattleModel) {
+    let count = model.0.bank.tokens.get(color);
+    parent
+        .spawn((
+            Button,
+            Node {
+                flex_grow: 1.0,
+                height: px(58),
+                min_width: px(64),
+                position_type: PositionType::Relative,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                column_gap: px(7),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(9)),
+                ..default()
+            },
+            BackgroundColor(gem_color(color).with_alpha(0.13)),
+            BorderColor::all(gem_color(color).with_alpha(0.55)),
+            UiTransform::default(),
+            SupplyButton(color),
+        ))
+        .with_children(|token| {
+            token
+                .spawn((
+                    Node {
+                        width: px(28),
+                        height: px(28),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        border_radius: BorderRadius::MAX,
+                        border: UiRect::all(px(2)),
+                        ..default()
+                    },
+                    BackgroundColor(gem_color(color)),
+                    BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.34)),
+                ))
+                .with_children(|coin| {
+                    coin.spawn((
+                        Text::new(color_short(color)),
+                        TextFont { font_size: 9.0, ..default() },
+                        TextColor(if matches!(color, GemColor::White) { INK } else { CREAM }),
+                    ));
+                });
+            token.spawn((
+                Text::new(format!("x{count}")),
+                TextFont { font_size: 12.0, ..default() },
+                TextColor(CREAM),
+                SupplyCountText(color),
+            ));
+            // x2 badge (shown when count >= 4)
+            if count >= 4 {
+                token.spawn((
+                    Button,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        right: px(2),
+                        top: px(2),
+                        width: px(22),
+                        height: px(16),
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        border: UiRect::all(px(1)),
+                        border_radius: BorderRadius::all(px(4)),
+                        ..default()
+                    },
+                    BackgroundColor(GOLD.with_alpha(0.85)),
+                    BorderColor::all(GOLD_BRIGHT),
+                    SupplyX2Button(color),
+                ))
+                .with_children(|x2| {
+                    x2.spawn((
+                        Text::new("x2"),
+                        TextFont { font_size: 8.0, ..default() },
+                        TextColor(INK),
+                    ));
+                });
+            }
+        });
+}
+
+fn spawn_selection_hud(market: &mut ChildSpawnerCommands) {
+    market
+        .spawn(Node {
+            width: percent(100),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            column_gap: px(8),
+            ..default()
+        })
+        .with_children(|hud| {
+            hud.spawn((
+                Text::new("0/3"),
+                TextFont { font_size: 11.0, ..default() },
+                TextColor(MUTED),
+                SelectionHudText,
+            ));
+            hud.spawn((
+                Button,
+                Node {
+                    width: px(90),
+                    height: px(26),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: UiRect::all(px(1)),
+                    border_radius: BorderRadius::all(px(6)),
+                    ..default()
+                },
+                BackgroundColor(GOLD.with_alpha(0.3)),
+                BorderColor::all(GOLD.with_alpha(0.5)),
+                ConfirmTake3Button,
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    Text::new("TAKE 3"),
+                    TextFont { font_size: 10.0, ..default() },
+                    TextColor(CREAM),
+                ));
+            });
+            hud.spawn((
+                Button,
+                Node {
+                    width: px(70),
+                    height: px(26),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: UiRect::all(px(1)),
+                    border_radius: BorderRadius::all(px(6)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.05)),
+                BorderColor::all(OUTLINE),
+                ClearSelectionButton,
+            ))
+            .with_children(|b| {
+                b.spawn((
+                    Text::new("CLEAR"),
+                    TextFont { font_size: 10.0, ..default() },
+                    TextColor(MUTED),
                 ));
             });
         });
