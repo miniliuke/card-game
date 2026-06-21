@@ -1,3 +1,7 @@
+// UI marker 组件多含仅用于 Query 过滤/标识的字段，整体放行 dead_code 噪音
+// （与 rules/mod.rs 同策略）。
+#![allow(dead_code)]
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::{
@@ -1483,7 +1487,7 @@ fn play_events(
                         .find(|(_, s)| s.level == *level && model.0.market.visible(*level).len() == s.slot + 1)
                     {
                         commands.entity(slot_entity).with_children(|p| {
-                            let mut e = p.spawn((
+                            p.spawn((
                                 Node {
                                     width: percent(100),
                                     height: percent(100),
@@ -1494,7 +1498,6 @@ fn play_events(
                                     timer: Timer::from_seconds(0.34, TimerMode::Once),
                                 },
                             ));
-                            let _ = e;
                             spawn_card_button_inner(p, *card_obj, *level);
                         });
                         anim.dealing += 1;
