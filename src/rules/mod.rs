@@ -2,7 +2,14 @@
 //!
 //! 公共 API 通过 `pub use` 重导出，调用方只需 `use crate::rules::*`。
 //!
-//! 注：各 `pub use` 随对应子模块实现逐步启用，避免引用未定义符号阻塞编译。
+//! 注：本模块设计为独立可复用的规则层 API，供后续 Bevy System 调用。
+//! 当前二进制尚未接入，故 `pub` 项暂未被 crate 外消费；
+//! 为避免 `dead_code`/`unused_imports` 噪音干扰，整体放行。
+
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::module_inception)]
 
 mod color;
 mod token;

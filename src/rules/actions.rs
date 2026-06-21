@@ -577,4 +577,74 @@ mod tests {
         assert!(matches!(r2.outcome, ActionOutcome::Complete));
         assert!(g.player(0).nobles.contains(&50));
     }
+
+    #[test]
+    fn smoke_full_game_does_not_panic_and_terminates() {
+        let mut g = GameState::new_seeded(3, 7).unwrap();
+        let mut turns = 0;
+        while !g.is_over() && turns < 2000 {
+            let pid = g.current_id();
+            // 简单策略：优先尝试买可见卡，否则拿 3 不同筹码。
+            let bought = try_buy_first_affordable(&mut g, pid);
+            if !bought {
+                let colors: Vec<GemColor> = GemColor::NORMAL
+                    .iter()
+                    .copied()
+                    .filter(|c| g.bank.tokens.get(*c) >= 1)
+                    .take(3)
+                    .collect();
+                if colors.len() == 3 {
+                    let r = apply_action(&mut g, pid, PlayerAction::TakeThreeDifferentTokens(colors)).unwrap();
+                    if let ActionOutcome::NeedDiscardTokens { .. } = r.outcome {
+                        // 简单弃牌：归还全部金 + 任意直到 10。
+                        let over = g.player(pid).token_total() - crate::rules::player::TOKEN_LIMIT;
+                        let mut ret = TokenSet::default();
+                        let mut to_ret = over;
+                        for c in GemColor::NORMAL {
+                            if to_ret == 0 { break; }
+                            let have = g.player(pid).token_count(c);
+                            let give = have.min(to_ret);
+                            ret.add(c, give);
+                            to_ret -= give;
+                        }
+                        resume(&mut g, pid, Resume::DiscardTokens(ret)).unwrap();
+                    }
+                } else {
+                    // 无法行动：保留一张牌堆顶（若可）。
+                    if let Ok(_) = apply_action(&mut g, pid, PlayerAction::ReserveDeckCard(crate::rules::card::CardLevel::Level1)) {
+                        // 若触发弃牌，简单归还金。
+                        if g.player(pid).token_total() > crate::rules::player::TOKEN_LIMIT {
+                            let over = g.player(pid).token_total() - crate::rules::player::TOKEN_LIMIT;
+                            let mut ret = TokenSet::default();
+                            ret.set(GemColor::Gold, over.min(g.player(pid).token_count(GemColor::Gold)));
+                            resume(&mut g, pid, Resume::DiscardTokens(ret)).ok();
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+            turns += 1;
+        }
+        // 2000 步内应能结束（或至少不 panic）。
+        assert!(turns < 2000, "game did not terminate");
+    }
+
+    fn try_buy_first_affordable(g: &mut GameState, pid: PlayerId) -> bool {
+        use crate::rules::validation::can_afford;
+        for level in crate::rules::card::CardLevel::ALL {
+            let visible: Vec<_> = g.market.visible(level).to_vec();
+            for (idx, card) in visible.iter().enumerate() {
+                let bonus = g.player(pid).bonus(&g.card_store);
+                if can_afford(g.player(pid).tokens, card, bonus).is_ok() {
+                    let r = apply_action(g, pid, PlayerAction::BuyVisibleCard { level, idx }).unwrap();
+                    if let ActionOutcome::NeedChooseNoble { candidates } = r.outcome {
+                        resume(g, pid, Resume::ChooseNoble(candidates[0])).unwrap();
+                    }
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }

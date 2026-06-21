@@ -75,17 +75,18 @@ impl Market {
     /// 符合 rules.md §5：购买/保留可见卡后立即补牌。
     pub fn refill(&mut self, level: CardLevel, deck: &mut CardDecks) -> Option<CardId> {
         let v = self.visible_mut(level);
-        while v.len() < VISIBLE_PER_LEVEL {
+        if v.len() < VISIBLE_PER_LEVEL {
             match deck.pop(level) {
                 Some(card) => {
                     let id = card.id;
                     v.push(card);
-                    return Some(id); // 每次只补一张（取走一张只需补一张）
+                    Some(id) // 每次只补一张（取走一张只需补一张）
                 }
-                None => return None,
+                None => None,
             }
+        } else {
+            None
         }
-        None
     }
 }
 
