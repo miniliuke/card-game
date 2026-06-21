@@ -19,7 +19,7 @@ mod error;
 
 pub use color::{CardColor, GemColor, PlayerId};
 pub use token::{Bank, TokenSet}; // Task 4
-// pub use card::{CardBonus, CardId, CardLevel, CardStore, DevelopmentCard, GemCost}; // Task 5
+pub use card::{CardBonus, CardId, CardLevel, CardStore, DevelopmentCard, GemCost}; // Task 5
 // pub use noble::{Noble, NobleBoard, NobleId, NobleStore}; // Task 6
 // pub use player::PlayerState;                            // Task 7
 // pub use market::{CardDecks, Market};                    // Task 8
