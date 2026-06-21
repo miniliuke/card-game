@@ -37,15 +37,24 @@ impl Plugin for BattlePlugin {
             .add_systems(OnExit(AppState::Battle), cleanup_battle)
             .add_systems(
                 Update,
-                mouse_actions
-                    .run_if(in_state(AppState::Battle))
-                    .run_if(|phase: Res<BattlePhase>,
-                             anim: Res<AnimationCounts>,
-                             pending: Res<PendingEvents>| {
-                        can_act(&phase, anim.busy(), &pending)
-                    }),
+                (
+                    mouse_actions.run_if(input_gate),
+                    apply_actions,
+                    play_events,
+                    commit_pending_phase,
+                )
+                    .chain()
+                    .run_if(in_state(AppState::Battle)),
             );
     }
+}
+
+fn input_gate(
+    phase: Res<BattlePhase>,
+    anim: Res<AnimationCounts>,
+    pending: Res<PendingEvents>,
+) -> bool {
+    can_act(&phase, anim.busy(), &pending)
 }
 
 // === 动画组件（复用） ===
@@ -303,6 +312,44 @@ fn should_commit_phase(
 /// 输入门控：仅 Idle + 不忙 + 无待播事件时允许新行动。
 fn can_act(phase: &BattlePhase, busy: bool, pending: &PendingEvents) -> bool {
     matches!(phase, BattlePhase::Idle) && !busy && pending.0.is_empty()
+}
+
+/// 把 ActionOutcome 映射为待提交的 BattlePhase（None = 保持 Idle）。
+/// 注意 NeedFinalDiscardThenChooseNoble 只映射到 discard 阶段；
+/// candidates 由调用方存入 PendingNobleCandidates。
+fn outcome_to_pending(outcome: ActionOutcome) -> Option<BattlePhase> {
+    match outcome {
+        ActionOutcome::Complete => None,
+        ActionOutcome::NeedDiscardTokens { excess } => {
+            Some(BattlePhase::AwaitDiscard { excess })
+        }
+        ActionOutcome::NeedChooseNoble { candidates } => {
+            Some(BattlePhase::AwaitNobleChoice { candidates })
+        }
+        ActionOutcome::NeedFinalDiscardThenChooseNoble { excess, .. } => {
+            Some(BattlePhase::AwaitDiscard { excess })
+        }
+    }
+}
+
+/// 若 events 含 GameOver，返回对应 BattlePhase。
+fn game_over_phase(events: &[GameEvent]) -> Option<BattlePhase> {
+    events.iter().find_map(|e| match e {
+        GameEvent::GameOver { winner, standings } => {
+            Some(BattlePhase::GameOver { winner: *winner, standings: standings.clone() })
+        }
+        _ => None,
+    })
+}
+
+/// 从 NeedFinalDiscardThenChooseNoble 提取 candidates。
+fn final_noble_candidates(outcome: &ActionOutcome) -> Option<Vec<NobleId>> {
+    match outcome {
+        ActionOutcome::NeedFinalDiscardThenChooseNoble { candidates, .. } => {
+            Some(candidates.clone())
+        }
+        _ => None,
+    }
 }
 
 fn setup_battle(mut commands: Commands) {
@@ -1171,6 +1218,147 @@ fn mouse_actions(
     }
 }
 
+fn apply_actions(
+    mut commands: Commands,
+    mut queue: ResMut<ActionQueue>,
+    mut model: ResMut<BattleModel>,
+    mut pending_events: ResMut<PendingEvents>,
+    mut pending_phase: ResMut<PendingPhase>,
+    mut pending_nobles: ResMut<PendingNobleCandidates>,
+    anim: Res<AnimationCounts>,
+    mut status: Single<&mut Text, With<StatusText>>,
+    mut dirty: ResMut<UiDirty>,
+    mut turn: ResMut<TurnCount>,
+) {
+    // 防重入
+    if pending_phase.0.is_some() || anim.busy() || !pending_events.0.is_empty() {
+        return;
+    }
+    let actions = std::mem::take(&mut queue.0);
+    if actions.is_empty() {
+        return;
+    }
+    for action in actions {
+        let pid = model.0.current_id();
+        let result = match apply_action(&mut model.0, pid, action.to_player_action()) {
+            Ok(r) => r,
+            Err(e) => {
+                ***status = rule_error_message(e).to_string();
+                continue;
+            }
+        };
+        // 暂存 candidates 若为 final discard + noble
+        if let Some(cands) = final_noble_candidates(&result.outcome) {
+            pending_nobles.0 = Some(cands);
+        }
+        // GameOver 优先
+        if let Some(phase) = game_over_phase(&result.events) {
+            pending_events.0.extend(result.events);
+            pending_phase.0 = Some(phase);
+        } else if let Some(phase) = outcome_to_pending(result.outcome) {
+            pending_events.0.extend(result.events);
+            pending_phase.0 = Some(phase);
+        } else {
+            pending_events.0.extend(result.events);
+        }
+        turn.0 += 1;
+    }
+    // 让 status/dirty 反映；事件播放系统会逐个置 dirty
+    let _ = (&mut commands, &mut dirty);
+}
+
+fn rule_error_message(e: RuleError) -> &'static str {
+    match e {
+        RuleError::NotYourTurn => "Not your turn.",
+        RuleError::TooManyReserved => "Reserved cards full (3).",
+        RuleError::BankInsufficient => "Bank has insufficient tokens.",
+        RuleError::TokenLimitExceeded => "Token limit exceeded.",
+        RuleError::CardNotFound => "Card not found.",
+        RuleError::CannotAfford => "Cannot afford that card.",
+        RuleError::InvalidTokenSelection => "Invalid token selection.",
+        RuleError::NobleNotEligible => "Noble not eligible.",
+        RuleError::DeckEmpty => "Deck is empty.",
+        RuleError::InvalidResume => "Invalid resume.",
+        RuleError::GameOver => "Game is over.",
+        RuleError::InvalidPlayerCount => "Invalid player count.",
+    }
+}
+
+fn play_events(
+    mut pending: ResMut<PendingEvents>,
+    mut anim: ResMut<AnimationCounts>,
+    mut dirty: ResMut<UiDirty>,
+    mut status: Single<&mut Text, With<StatusText>>,
+    model: Res<BattleModel>,
+) {
+    if pending.0.is_empty() {
+        return;
+    }
+    // 每帧消费一个事件（动画细节后续 Task；此处先置 dirty + status）
+    let event = pending.0.remove(0);
+    match &event {
+        GameEvent::TokensTaken { player, tokens } => {
+            let _ = tokens;
+            ***status = format!("Player {} took tokens.", player + 1);
+        }
+        GameEvent::TokensReturned { player, .. } => {
+            ***status = format!("Player {} returned tokens.", player + 1);
+        }
+        GameEvent::CardReserved { player, got_gold, .. } => {
+            ***status = format!(
+                "Player {} reserved a card{}.",
+                player + 1,
+                if *got_gold { " (+gold)" } else { "" }
+            );
+        }
+        GameEvent::CardPurchased { player, card, .. } => {
+            ***status = format!("Player {} bought card #{}.", player + 1, card);
+        }
+        GameEvent::MarketRefilled { .. } => {}
+        GameEvent::NobleVisited { player, noble } => {
+            ***status = format!("Player {} was visited by noble #{}.", player + 1, noble);
+        }
+        GameEvent::EndGameTriggered { player } => {
+            ***status = format!("Player {} reached 15! Final round.", player + 1);
+        }
+        GameEvent::GameOver { winner, standings } => {
+            ***status = format!(
+                "Game over! Winner: Player {} ({} pts).",
+                winner + 1,
+                standings.first().map(|(_, s)| *s).unwrap_or(0)
+            );
+        }
+    }
+    let _ = (&mut anim, &model);
+    dirty.0 = true;
+}
+
+fn commit_pending_phase(
+    pending_events: Res<PendingEvents>,
+    anim: Res<AnimationCounts>,
+    phase: Res<BattlePhase>,
+    pending_phase: Res<PendingPhase>,
+    mut phase_mut: ResMut<BattlePhase>,
+    mut pending_phase_mut: ResMut<PendingPhase>,
+    mut commands: Commands,
+    root: Single<Entity, With<BattleRoot>>,
+) {
+    if !should_commit_phase(&pending_events, anim.busy(), &phase, &pending_phase) {
+        return;
+    }
+    let new_phase = pending_phase.0.clone().expect("checked non-None");
+    *phase_mut = new_phase.clone();
+    pending_phase_mut.0 = None;
+    // spawn 对应覆盖层（实现见 Task 14；此处仅 GameOver 立即处理占位）
+    match new_phase {
+        BattlePhase::AwaitDiscard { .. } | BattlePhase::AwaitNobleChoice { .. }
+        | BattlePhase::GameOver { .. } => {
+            let _ = (&mut commands, &root);
+        }
+        BattlePhase::Idle => {}
+    }
+}
+
 // === 辅助函数 ===
 fn now_seed() -> u64 {
     SystemTime::now()
@@ -1309,5 +1497,31 @@ mod tests {
         let mut pending = PendingEvents::default();
         pending.0.push(GameEvent::NobleVisited { player: 0, noble: 0 });
         assert!(!can_act(&idle, false, &pending));    // events pending
+    }
+
+    #[test]
+    fn outcome_complete_yields_no_pending() {
+        assert!(outcome_to_pending(ActionOutcome::Complete).is_none());
+    }
+
+    #[test]
+    fn outcome_need_discard_maps() {
+        let p = outcome_to_pending(ActionOutcome::NeedDiscardTokens { excess: 2 });
+        assert!(matches!(p, Some(BattlePhase::AwaitDiscard { excess: 2 })));
+    }
+
+    #[test]
+    fn outcome_need_choose_noble_maps() {
+        let p = outcome_to_pending(ActionOutcome::NeedChooseNoble { candidates: vec![1, 2] });
+        assert!(matches!(p, Some(BattlePhase::AwaitNobleChoice { candidates }) if candidates == vec![1, 2]));
+    }
+
+    #[test]
+    fn outcome_need_final_discard_then_noble_maps_to_discard() {
+        let p = outcome_to_pending(ActionOutcome::NeedFinalDiscardThenChooseNoble {
+            excess: 1,
+            candidates: vec![3],
+        });
+        assert!(matches!(p, Some(BattlePhase::AwaitDiscard { excess: 1 })));
     }
 }
