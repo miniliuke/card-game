@@ -59,6 +59,50 @@ impl AnimationCounts {
     }
 }
 
+// === 核心资源 ===
+
+#[derive(Resource)]
+struct BattleModel(GameState);
+
+#[derive(Resource, Default, Clone)]
+struct PendingEvents(Vec<GameEvent>);
+
+#[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
+struct TurnCount(u32);
+
+#[derive(Resource, Clone, PartialEq, Eq, Debug)]
+enum BattlePhase {
+    Idle,
+    AwaitDiscard { excess: u8 },
+    AwaitNobleChoice { candidates: Vec<NobleId> },
+    GameOver { winner: PlayerId, standings: Vec<(PlayerId, u16)> },
+}
+
+impl Default for BattlePhase {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+/// 动画/事件播完后才提交为 BattlePhase（避免动画未完就弹覆盖层）。
+#[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
+struct PendingPhase(Option<BattlePhase>);
+
+/// 买牌触发"先弃牌再选贵族"时，暂存贵族候选。
+#[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
+struct PendingNobleCandidates(Option<Vec<NobleId>>);
+
+/// 纯函数：判定此刻是否应把 PendingPhase 提交为 BattlePhase。
+/// 条件：事件队列空 && 不忙 && PendingPhase 非空。
+fn should_commit_phase(
+    pending: &PendingEvents,
+    busy: bool,
+    _current_phase: &BattlePhase,
+    pending_phase: &PendingPhase,
+) -> bool {
+    pending.0.is_empty() && !busy && pending_phase.0.is_some()
+}
+
 fn setup_battle(_commands: Commands) {
     // 占位；后续 Task 填充
 }
@@ -127,5 +171,42 @@ mod tests {
     #[test]
     fn color_name_covers_gold() {
         assert_eq!(color_name(GemColor::Gold), "GOLD");
+    }
+
+    #[test]
+    fn pending_phase_not_committed_while_events_pending() {
+        let mut pending = PendingEvents::default();
+        pending.0.push(GameEvent::TokensTaken { player: 0, tokens: TokenSet::default() });
+        let phase = BattlePhase::Idle;
+        let pp = PendingPhase::default(); // None
+        let busy = false;
+        assert!(!should_commit_phase(&pending, busy, &phase, &pp));
+    }
+
+    #[test]
+    fn pending_phase_not_committed_while_busy() {
+        let pending = PendingEvents::default(); // 空
+        let phase = BattlePhase::Idle;
+        let pp = PendingPhase(Some(BattlePhase::AwaitDiscard { excess: 1 }));
+        let busy = true;
+        assert!(!should_commit_phase(&pending, busy, &phase, &pp));
+    }
+
+    #[test]
+    fn pending_phase_committed_when_idle_events_empty_and_not_busy() {
+        let pending = PendingEvents::default();
+        let phase = BattlePhase::Idle;
+        let pp = PendingPhase(Some(BattlePhase::AwaitNobleChoice { candidates: vec![0] }));
+        let busy = false;
+        assert!(should_commit_phase(&pending, busy, &phase, &pp));
+    }
+
+    #[test]
+    fn pending_phase_none_never_commits() {
+        let pending = PendingEvents::default();
+        let phase = BattlePhase::Idle;
+        let pp = PendingPhase::default(); // None
+        let busy = false;
+        assert!(!should_commit_phase(&pending, busy, &phase, &pp));
     }
 }
