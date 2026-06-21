@@ -138,6 +138,11 @@ fn should_commit_phase(
     pending.0.is_empty() && !busy && pending_phase.0.is_some()
 }
 
+/// 输入门控：仅 Idle + 不忙 + 无待播事件时允许新行动。
+fn can_act(phase: &BattlePhase, busy: bool, pending: &PendingEvents) -> bool {
+    matches!(phase, BattlePhase::Idle) && !busy && pending.0.is_empty()
+}
+
 fn setup_battle(_commands: Commands) {
     // 占位；后续 Task 填充
 }
@@ -276,5 +281,19 @@ mod tests {
         for (ba, expected) in cases {
             assert_eq!(ba.to_player_action(), expected);
         }
+    }
+
+    #[test]
+    fn can_act_only_when_idle_not_busy_events_empty() {
+        let idle = BattlePhase::Idle;
+        let non_idle = BattlePhase::AwaitDiscard { excess: 1 };
+        let empty = PendingEvents::default();
+
+        assert!(can_act(&idle, false, &empty));
+        assert!(!can_act(&idle, true, &empty));       // busy
+        assert!(!can_act(&non_idle, false, &empty)); // not idle
+        let mut pending = PendingEvents::default();
+        pending.0.push(GameEvent::NobleVisited { player: 0, noble: 0 });
+        assert!(!can_act(&idle, false, &pending));    // events pending
     }
 }
