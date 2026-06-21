@@ -39,6 +39,9 @@ impl Plugin for BattlePlugin {
                 Update,
                 (
                     mouse_actions.run_if(input_gate),
+                    discard_overlay_input,
+                    noble_overlay_input,
+                    gameover_overlay_input,
                     apply_actions,
                     play_events,
                     commit_pending_phase,
@@ -210,6 +213,36 @@ struct Focusable {
     zone: FocusZone,
     normal_border: Color,
 }
+
+#[derive(Component)]
+struct Overlay;
+
+#[derive(Component)]
+struct DiscardOverlay;
+
+#[derive(Component)]
+struct NobleOverlay;
+
+#[derive(Component)]
+struct GameOverOverlay;
+
+#[derive(Component)]
+struct DiscardReturnButton(GemColor);
+
+#[derive(Component)]
+struct DiscardConfirmButton;
+
+#[derive(Component)]
+struct NobleChoiceButton(NobleId);
+
+#[derive(Component)]
+struct BackToMenuButton;
+
+#[derive(Component)]
+struct DiscardHudText;
+
+#[derive(Component)]
+struct NobleCandidateText(NobleId);
 
 #[derive(Resource, Default)]
 struct AnimationCounts {
@@ -1573,20 +1606,388 @@ fn commit_pending_phase(
     mut pending_phase_mut: ResMut<PendingPhase>,
     mut commands: Commands,
     root: Single<Entity, With<BattleRoot>>,
+    overlays: Query<Entity, With<Overlay>>,
+    mut discard_buf: ResMut<DiscardBuffer>,
+    pending_nobles: Res<PendingNobleCandidates>,
 ) {
     if !should_commit_phase(&pending_events, anim.busy(), &phase, &pending_phase) {
         return;
     }
     let new_phase = pending_phase.0.clone().expect("checked non-None");
+    // 清旧覆盖层
+    for e in &overlays {
+        commands.entity(e).despawn();
+    }
     *phase_mut = new_phase.clone();
     pending_phase_mut.0 = None;
-    // spawn 对应覆盖层（实现见 Task 14；此处仅 GameOver 立即处理占位）
+
     match new_phase {
-        BattlePhase::AwaitDiscard { .. } | BattlePhase::AwaitNobleChoice { .. }
-        | BattlePhase::GameOver { .. } => {
-            let _ = (&mut commands, &root);
+        BattlePhase::AwaitDiscard { excess } => {
+            discard_buf.excess = excess;
+            discard_buf.returned = TokenSet::default();
+            spawn_discard_overlay(commands, root, excess);
+        }
+        BattlePhase::AwaitNobleChoice { candidates } => {
+            spawn_noble_overlay(commands, root, &candidates);
+        }
+        BattlePhase::GameOver { winner, standings } => {
+            spawn_gameover_overlay(commands, root, winner, &standings);
         }
         BattlePhase::Idle => {}
+    }
+    let _ = pending_nobles;
+}
+
+fn spawn_discard_overlay(mut commands: Commands, root: Single<Entity, With<BattleRoot>>, excess: u8) {
+    let root_e = *root;
+    commands.entity(root_e).with_children(|overlay| {
+        overlay
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: percent(100),
+                    height: percent(100),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+                Overlay,
+                DiscardOverlay,
+            ))
+            .with_children(|panel_wrap| {
+                panel_wrap
+                    .spawn((
+                        Node {
+                            width: px(420),
+                            flex_direction: FlexDirection::Column,
+                            padding: UiRect::all(px(24)),
+                            row_gap: px(12),
+                            border: UiRect::all(px(1)),
+                            border_radius: BorderRadius::all(px(12)),
+                            ..default()
+                        },
+                        BackgroundColor(PANEL),
+                        BorderColor::all(GOLD),
+                    ))
+                    .with_children(|panel| {
+                        panel.spawn((
+                            Text::new(format!("DISCARD {excess} TOKENS")),
+                            TextFont { font_size: 18.0, ..default() },
+                            TextColor(GOLD_BRIGHT),
+                        ));
+                        panel.spawn((
+                            Text::new("0 returned"),
+                            TextFont { font_size: 12.0, ..default() },
+                            TextColor(CREAM),
+                            DiscardHudText,
+                        ));
+                        for c in GemColor::NORMAL {
+                            panel
+                                .spawn((
+                                    Button,
+                                    Node {
+                                        width: percent(100),
+                                        height: px(30),
+                                        align_items: AlignItems::Center,
+                                        justify_content: JustifyContent::SpaceBetween,
+                                        padding: UiRect::axes(px(12), px(4)),
+                                        border: UiRect::all(px(1)),
+                                        border_radius: BorderRadius::all(px(6)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(gem_color(c).with_alpha(0.15)),
+                                    BorderColor::all(gem_color(c).with_alpha(0.5)),
+                                    DiscardReturnButton(c),
+                                ))
+                                .with_children(|row| {
+                                    row.spawn((
+                                        Text::new(color_name(c)),
+                                        TextFont { font_size: 11.0, ..default() },
+                                        TextColor(CREAM),
+                                    ));
+                                });
+                        }
+                        panel
+                            .spawn((
+                                Button,
+                                Node {
+                                    width: percent(100),
+                                    height: px(36),
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    border: UiRect::all(px(1)),
+                                    border_radius: BorderRadius::all(px(8)),
+                                    ..default()
+                                },
+                                BackgroundColor(GOLD.with_alpha(0.3)),
+                                BorderColor::all(GOLD.with_alpha(0.5)),
+                                DiscardConfirmButton,
+                            ))
+                            .with_children(|b| {
+                                b.spawn((
+                                    Text::new("CONFIRM"),
+                                    TextFont { font_size: 12.0, ..default() },
+                                    TextColor(CREAM),
+                                ));
+                            });
+                    });
+            });
+    });
+}
+
+fn spawn_noble_overlay(
+    mut commands: Commands,
+    root: Single<Entity, With<BattleRoot>>,
+    candidates: &[NobleId],
+) {
+    let root_e = *root;
+    commands.entity(root_e).with_children(|overlay| {
+        overlay
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: percent(100),
+                    height: percent(100),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+                Overlay,
+                NobleOverlay,
+            ))
+            .with_children(|wrap| {
+                wrap.spawn((
+                    Node {
+                        width: px(460),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(px(24)),
+                        row_gap: px(10),
+                        border: UiRect::all(px(1)),
+                        border_radius: BorderRadius::all(px(12)),
+                        ..default()
+                    },
+                    BackgroundColor(PANEL),
+                    BorderColor::all(GOLD),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new("CHOOSE A NOBLE"),
+                        TextFont { font_size: 18.0, ..default() },
+                        TextColor(GOLD_BRIGHT),
+                    ));
+                    for &id in candidates {
+                        panel
+                            .spawn((
+                                Button,
+                                Node {
+                                    width: percent(100),
+                                    height: px(44),
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    border: UiRect::all(px(1)),
+                                    border_radius: BorderRadius::all(px(8)),
+                                    ..default()
+                                },
+                                BackgroundColor(GOLD.with_alpha(0.15)),
+                                BorderColor::all(GOLD.with_alpha(0.5)),
+                                NobleChoiceButton(id),
+                            ))
+                            .with_children(|b| {
+                                b.spawn((
+                                    Text::new(format!("NOBLE #{id} (3 pts)")),
+                                    TextFont { font_size: 13.0, ..default() },
+                                    TextColor(CREAM),
+                                    NobleCandidateText(id),
+                                ));
+                            });
+                    }
+                });
+            });
+    });
+}
+
+fn spawn_gameover_overlay(
+    mut commands: Commands,
+    root: Single<Entity, With<BattleRoot>>,
+    winner: PlayerId,
+    standings: &[(PlayerId, u16)],
+) {
+    let root_e = *root;
+    commands.entity(root_e).with_children(|overlay| {
+        overlay
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: percent(100),
+                    height: percent(100),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
+                Overlay,
+                GameOverOverlay,
+            ))
+            .with_children(|wrap| {
+                wrap.spawn((
+                    Node {
+                        width: px(420),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(px(24)),
+                        row_gap: px(8),
+                        border: UiRect::all(px(1)),
+                        border_radius: BorderRadius::all(px(12)),
+                        ..default()
+                    },
+                    BackgroundColor(PANEL),
+                    BorderColor::all(GOLD),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new(format!("GAME OVER — PLAYER {} WINS", winner + 1)),
+                        TextFont { font_size: 18.0, ..default() },
+                        TextColor(GOLD_BRIGHT),
+                    ));
+                    for (i, (pid, score)) in standings.iter().enumerate() {
+                        panel.spawn((
+                            Text::new(format!("{}. PLAYER {} — {} pts", i + 1, pid + 1, score)),
+                            TextFont { font_size: 13.0, ..default() },
+                            TextColor(CREAM),
+                        ));
+                    }
+                    panel
+                        .spawn((
+                            Button,
+                            Node {
+                                width: percent(100),
+                                height: px(40),
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                border: UiRect::all(px(1)),
+                                border_radius: BorderRadius::all(px(8)),
+                                ..default()
+                            },
+                            BackgroundColor(GOLD.with_alpha(0.9)),
+                            BorderColor::all(GOLD_BRIGHT),
+                            BackToMenuButton,
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("BACK TO MENU"),
+                                TextFont { font_size: 13.0, ..default() },
+                                TextColor(INK),
+                            ));
+                        });
+                });
+            });
+    });
+}
+
+fn discard_overlay_input(
+    phase: Res<BattlePhase>,
+    mut model: ResMut<BattleModel>,
+    mut buf: ResMut<DiscardBuffer>,
+    return_btns: Query<(&Interaction, &DiscardReturnButton), Changed<Interaction>>,
+    confirm: Query<&Interaction, (Changed<Interaction>, With<DiscardConfirmButton>)>,
+    mut pending_events: ResMut<PendingEvents>,
+    mut pending_phase: ResMut<PendingPhase>,
+    pending_nobles: Res<PendingNobleCandidates>,
+    mut turn: ResMut<TurnCount>,
+    mut status: Single<&mut Text, With<StatusText>>,
+    overlays: Query<Entity, With<Overlay>>,
+    mut commands: Commands,
+) {
+    if !matches!(*phase, BattlePhase::AwaitDiscard { .. }) {
+        return;
+    }
+    let pid = model.0.current_id();
+    for (interaction, btn) in &return_btns {
+        if matches!(*interaction, Interaction::Pressed) {
+            let have = model.0.player(pid).token_count(btn.0);
+            let already = buf.returned.get(btn.0);
+            if have > already {
+                buf.returned.add(btn.0, 1);
+            }
+        }
+    }
+    if let Ok(interaction) = confirm.single() {
+        if matches!(*interaction, Interaction::Pressed)
+            && buf.returned.total() == buf.excess
+        {
+            let returned = buf.returned;
+            match resume(&mut model.0, pid, Resume::DiscardTokens(returned)) {
+                Ok(r) => {
+                    pending_events.0.extend(r.events);
+                    turn.0 += 1;
+                    // 清覆盖层
+                    for e in &overlays {
+                        commands.entity(e).despawn();
+                    }
+                    // 若有暂存贵族候选 -> 进 NobleChoice；否则回 Idle
+                    if let Some(cands) = pending_nobles.0.clone() {
+                        pending_phase.0 = Some(BattlePhase::AwaitNobleChoice { candidates: cands });
+                    } else {
+                        pending_phase.0 = None; // Idle
+                    }
+                }
+                Err(e) => {
+                    ***status = rule_error_message(e).to_string();
+                }
+            }
+        }
+    }
+}
+
+fn noble_overlay_input(
+    phase: Res<BattlePhase>,
+    choices: Query<(&Interaction, &NobleChoiceButton), Changed<Interaction>>,
+    mut model: ResMut<BattleModel>,
+    mut pending_events: ResMut<PendingEvents>,
+    mut pending_phase: ResMut<PendingPhase>,
+    mut pending_nobles: ResMut<PendingNobleCandidates>,
+    mut turn: ResMut<TurnCount>,
+    mut status: Single<&mut Text, With<StatusText>>,
+    overlays: Query<Entity, With<Overlay>>,
+    mut commands: Commands,
+) {
+    if !matches!(*phase, BattlePhase::AwaitNobleChoice { .. }) {
+        return;
+    }
+    for (interaction, btn) in &choices {
+        if matches!(*interaction, Interaction::Pressed) {
+            let pid = model.0.current_id();
+            match resume(&mut model.0, pid, Resume::ChooseNoble(btn.0)) {
+                Ok(r) => {
+                    pending_events.0.extend(r.events);
+                    turn.0 += 1;
+                    pending_nobles.0 = None;
+                    pending_phase.0 = None; // Idle（或 GameOver 由事件触发）
+                    for e in &overlays {
+                        commands.entity(e).despawn();
+                    }
+                }
+                Err(e) => {
+                    ***status = rule_error_message(e).to_string();
+                }
+            }
+        }
+    }
+}
+
+fn gameover_overlay_input(
+    phase: Res<BattlePhase>,
+    btn: Query<&Interaction, (Changed<Interaction>, With<BackToMenuButton>)>,
+    mut next_state: ResMut<NextState<AppState>>,
+) {
+    if !matches!(*phase, BattlePhase::GameOver { .. }) {
+        return;
+    }
+    if let Ok(interaction) = btn.single() {
+        if matches!(*interaction, Interaction::Pressed) {
+            next_state.set(AppState::Menu);
+        }
     }
 }
 
