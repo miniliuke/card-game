@@ -44,6 +44,41 @@ struct DealAnimation {
 #[derive(Component)]
 struct BattleScreen;
 
+// === BattleAction（Bevy 组件，挂按钮上） ===
+
+/// 拿 3 不同色的固定 3 元组（不能用 Vec，因 Component 需 Copy）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Triple([GemColor; 3]);
+
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+enum BattleAction {
+    TakeThreeDifferentTokens(Triple),
+    TakeTwoSameTokens(GemColor),
+    ReserveVisibleCard { level: CardLevel, idx: usize },
+    ReserveDeckCard(CardLevel),
+    BuyVisibleCard { level: CardLevel, idx: usize },
+    BuyReservedCard(usize),
+}
+
+impl BattleAction {
+    fn to_player_action(self) -> PlayerAction {
+        match self {
+            Self::TakeThreeDifferentTokens(Triple([a, b, c])) => {
+                PlayerAction::TakeThreeDifferentTokens(vec![a, b, c])
+            }
+            Self::TakeTwoSameTokens(c) => PlayerAction::TakeTwoSameTokens(c),
+            Self::ReserveVisibleCard { level, idx } => {
+                PlayerAction::ReserveVisibleCard { level, idx }
+            }
+            Self::ReserveDeckCard(level) => PlayerAction::ReserveDeckCard(level),
+            Self::BuyVisibleCard { level, idx } => {
+                PlayerAction::BuyVisibleCard { level, idx }
+            }
+            Self::BuyReservedCard(i) => PlayerAction::BuyReservedCard(i),
+        }
+    }
+}
+
 #[derive(Component)]
 struct BattleRoot;
 
@@ -208,5 +243,38 @@ mod tests {
         let pp = PendingPhase::default(); // None
         let busy = false;
         assert!(!should_commit_phase(&pending, busy, &phase, &pp));
+    }
+
+    #[test]
+    fn maps_all_actions_to_player_action() {
+        let cases: Vec<(BattleAction, PlayerAction)> = vec![
+            (
+                BattleAction::TakeThreeDifferentTokens(Triple([GemColor::White, GemColor::Blue, GemColor::Green])),
+                PlayerAction::TakeThreeDifferentTokens(vec![GemColor::White, GemColor::Blue, GemColor::Green]),
+            ),
+            (
+                BattleAction::TakeTwoSameTokens(GemColor::Red),
+                PlayerAction::TakeTwoSameTokens(GemColor::Red),
+            ),
+            (
+                BattleAction::ReserveVisibleCard { level: CardLevel::Level1, idx: 2 },
+                PlayerAction::ReserveVisibleCard { level: CardLevel::Level1, idx: 2 },
+            ),
+            (
+                BattleAction::ReserveDeckCard(CardLevel::Level2),
+                PlayerAction::ReserveDeckCard(CardLevel::Level2),
+            ),
+            (
+                BattleAction::BuyVisibleCard { level: CardLevel::Level3, idx: 0 },
+                PlayerAction::BuyVisibleCard { level: CardLevel::Level3, idx: 0 },
+            ),
+            (
+                BattleAction::BuyReservedCard(1),
+                PlayerAction::BuyReservedCard(1),
+            ),
+        ];
+        for (ba, expected) in cases {
+            assert_eq!(ba.to_player_action(), expected);
+        }
     }
 }
