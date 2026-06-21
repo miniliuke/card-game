@@ -124,6 +124,30 @@ struct ReservedCardButton {
 #[derive(Component)]
 struct NoblesRow(PlayerId);
 
+#[derive(Component)]
+struct CardSlot {
+    level: CardLevel,
+    slot: usize,
+}
+
+#[derive(Component)]
+struct CardButton {
+    level: CardLevel,
+    slot: usize,
+}
+
+#[derive(Component)]
+struct DeckReserveButton(CardLevel);
+
+#[derive(Component)]
+struct DeckCountText(CardLevel);
+
+#[derive(Component)]
+struct ReserveMarketButton {
+    level: CardLevel,
+    slot: usize,
+}
+
 #[derive(Resource, Default)]
 struct AnimationCounts {
     flying: usize,
@@ -237,8 +261,8 @@ fn can_act(phase: &BattlePhase, busy: bool, pending: &PendingEvents) -> bool {
 fn setup_battle(mut commands: Commands) {
     let seed = now_seed();
     let state = GameState::new_seeded(2, seed).expect("2-player game always valid");
+    let model = BattleModel(state);
 
-    commands.insert_resource(BattleModel(state));
     commands.insert_resource(BattlePhase::Idle);
     commands.init_resource::<PendingEvents>();
     commands.init_resource::<PendingPhase>();
@@ -274,8 +298,11 @@ fn setup_battle(mut commands: Commands) {
         ))
         .with_children(|root| {
             spawn_player_panel(root, 0);
+            spawn_market(root, &model);
             spawn_player_panel(root, 1);
         });
+
+    commands.insert_resource(model);
 }
 
 fn cleanup_battle(
@@ -440,6 +467,242 @@ fn spawn_player_gold_row(parent: &mut ChildSpawnerCommands, player: PlayerId) {
                 TextColor(CREAM),
                 PlayerGoldText(player),
             ));
+        });
+}
+
+fn spawn_market(parent: &mut ChildSpawnerCommands, model: &BattleModel) {
+    parent
+        .spawn(Node {
+            width: percent(60),
+            max_width: px(900),
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Column,
+            row_gap: px(8),
+            ..default()
+        })
+        .with_children(|market| {
+            market
+                .spawn(Node {
+                    width: percent(100),
+                    align_items: AlignItems::End,
+                    justify_content: JustifyContent::SpaceBetween,
+                    padding: UiRect::axes(px(4), px(0)),
+                    ..default()
+                })
+                .with_children(|title| {
+                    title.spawn((
+                        Text::new("PUBLIC MARKET"),
+                        TextFont { font_size: 19.0, ..default() },
+                        TextColor(CREAM),
+                    ));
+                    title.spawn((
+                        Text::new("Buy [click] / Reserve [R] / Blind [deck]"),
+                        TextFont { font_size: 9.0, ..default() },
+                        TextColor(MUTED),
+                    ));
+                });
+
+            // Level3 顶 -> Level1 底
+            for level in [CardLevel::Level3, CardLevel::Level2, CardLevel::Level1] {
+                spawn_market_row(market, level, model);
+            }
+        });
+}
+
+fn spawn_market_row(parent: &mut ChildSpawnerCommands, level: CardLevel, model: &BattleModel) {
+    parent
+        .spawn(Node {
+            width: percent(100),
+            flex_grow: 1.0,
+            min_height: px(128),
+            max_height: px(158),
+            align_items: AlignItems::Stretch,
+            column_gap: px(8),
+            ..default()
+        })
+        .with_children(|row| {
+            // Deck 盲抽按钮 + 计数
+            row.spawn((
+                Button,
+                Node {
+                    width: px(72),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: UiRect::all(px(1)),
+                    border_radius: BorderRadius::all(px(9)),
+                    row_gap: px(5),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.03, 0.035, 0.05, 0.8)),
+                BorderColor::all(GOLD.with_alpha(0.32 + level.index() as f32 * 0.12)),
+                DeckReserveButton(level),
+            ))
+            .with_children(|deck| {
+                deck.spawn((
+                    Text::new(format!("TIER {}", level.index() + 1)),
+                    TextFont { font_size: 9.0, ..default() },
+                    TextColor(GOLD),
+                ));
+                deck.spawn((
+                    Text::new(format!("{:02}", model.0.decks.remaining(level))),
+                    TextFont { font_size: 21.0, ..default() },
+                    TextColor(CREAM),
+                    DeckCountText(level),
+                ));
+                deck.spawn((
+                    Text::new("BLIND"),
+                    TextFont { font_size: 8.0, ..default() },
+                    TextColor(MUTED),
+                ));
+            });
+
+            // 4 个槽
+            for slot in 0..VISIBLE_PER_LEVEL {
+                row.spawn((card_slot_node(), CardSlot { level, slot }))
+                    .with_children(|slot_parent| {
+                        if let Some(card) = model.0.market.visible(level).get(slot) {
+                            spawn_card_button(slot_parent, *card, level, slot);
+                        }
+                    });
+            }
+        });
+}
+
+fn card_slot_node() -> Node {
+    Node {
+        flex_grow: 1.0,
+        flex_basis: percent(0),
+        min_width: px(92),
+        height: percent(100),
+        ..default()
+    }
+}
+
+fn spawn_card_button(
+    parent: &mut ChildSpawnerCommands,
+    card: DevelopmentCard,
+    level: CardLevel,
+    slot: usize,
+) {
+    parent
+        .spawn((
+            Button,
+            Node {
+                width: percent(100),
+                height: percent(100),
+                min_height: px(126),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Stretch,
+                justify_content: JustifyContent::SpaceBetween,
+                padding: UiRect::all(px(9)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(9)),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundGradient::from(LinearGradient {
+                angle: 2.3,
+                stops: vec![
+                    ColorStop::new(gem_color(card.color.to_gem()).with_alpha(0.26), percent(0)),
+                    ColorStop::new(PANEL, percent(58)),
+                    ColorStop::new(Color::srgb(0.035, 0.039, 0.055), percent(100)),
+                ],
+                ..default()
+            }),
+            BorderColor::all(gem_color(card.color.to_gem()).with_alpha(0.68)),
+            UiTransform::default(),
+            BoxShadow(vec![ShadowStyle {
+                color: Color::srgba(0.0, 0.0, 0.0, 0.28),
+                x_offset: px(0),
+                y_offset: px(7),
+                spread_radius: px(0),
+                blur_radius: px(13),
+            }]),
+            CardButton { level, slot },
+            BattleAction::BuyVisibleCard { level, idx: slot },
+        ))
+        .with_children(|face| {
+            face.spawn(Node {
+                width: percent(100),
+                justify_content: JustifyContent::SpaceBetween,
+                ..default()
+            })
+            .with_children(|top| {
+                top.spawn((
+                    Text::new(format!("T{}", level.index() + 1)),
+                    TextFont { font_size: 9.0, ..default() },
+                    TextColor(GOLD),
+                ));
+                top.spawn((
+                    Text::new(format!("{} PTS", card.prestige)),
+                    TextFont { font_size: 9.0, ..default() },
+                    TextColor(CREAM),
+                ));
+            });
+            face.spawn(Node {
+                width: percent(100),
+                justify_content: JustifyContent::Center,
+                column_gap: px(3),
+                ..default()
+            })
+            .with_children(|costs| {
+                for color in CardColor::ALL {
+                    let amount = card.cost.get(color);
+                    costs
+                        .spawn((
+                            Node {
+                                width: px(18),
+                                height: px(18),
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                border_radius: BorderRadius::MAX,
+                                border: UiRect::all(px(1)),
+                                ..default()
+                            },
+                            BackgroundColor(gem_color(color.to_gem())
+                                .with_alpha(if amount == 0 { 0.18 } else { 0.72 })),
+                            BorderColor::all(gem_color(color.to_gem()).with_alpha(0.85)),
+                        ))
+                        .with_children(|dot| {
+                            dot.spawn((
+                                Text::new(amount.to_string()),
+                                TextFont { font_size: 8.0, ..default() },
+                                TextColor(if matches!(color, CardColor::White) {
+                                    INK
+                                } else {
+                                    CREAM
+                                }),
+                            ));
+                        });
+                }
+            });
+            // R 保留按钮（叠加底部）
+            face.spawn((
+                Button,
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: px(4),
+                    bottom: px(4),
+                    width: px(20),
+                    height: px(18),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: UiRect::all(px(1)),
+                    border_radius: BorderRadius::all(px(4)),
+                    ..default()
+                },
+                BackgroundColor(GOLD.with_alpha(0.2)),
+                BorderColor::all(GOLD.with_alpha(0.6)),
+                ReserveMarketButton { level, slot },
+            ))
+            .with_children(|r| {
+                r.spawn((
+                    Text::new("R"),
+                    TextFont { font_size: 9.0, ..default() },
+                    TextColor(GOLD_BRIGHT),
+                ));
+            });
         });
 }
 
