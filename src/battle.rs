@@ -166,6 +166,25 @@ struct ClearSelectionButton;
 #[derive(Component)]
 struct SelectionHudText;
 
+#[derive(Component)]
+struct TurnText;
+
+#[derive(Component)]
+struct StatusText;
+
+#[derive(Component)]
+struct NobleBoardArea;
+
+#[derive(Component)]
+struct NobleBadgeOnBoard(NobleId);
+
+/// 键盘焦点标记。zone 标识区域；按钮挂此组件供 keyboard_actions 定位。
+#[derive(Component, Clone, Copy)]
+struct Focusable {
+    zone: FocusZone,
+    normal_border: Color,
+}
+
 #[derive(Resource, Default)]
 struct AnimationCounts {
     flying: usize,
@@ -315,9 +334,27 @@ fn setup_battle(mut commands: Commands) {
             BattleRoot,
         ))
         .with_children(|root| {
-            spawn_player_panel(root, 0);
-            spawn_market(root, &model);
-            spawn_player_panel(root, 1);
+            spawn_ambient_shapes(root);
+            spawn_top_bar(root);
+            spawn_noble_board(root, &model);
+            root.spawn(Node {
+                width: percent(100),
+                max_width: px(1680),
+                flex_grow: 1.0,
+                align_self: AlignSelf::Center,
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Stretch,
+                justify_content: JustifyContent::Center,
+                padding: UiRect::axes(px(24), px(14)),
+                column_gap: px(18),
+                ..default()
+            })
+            .with_children(|main| {
+                spawn_player_panel(main, 0);
+                spawn_market(main, &model);
+                spawn_player_panel(main, 1);
+            });
+            spawn_footer(root);
         });
 
     commands.insert_resource(model);
@@ -921,6 +958,147 @@ fn spawn_selection_hud(market: &mut ChildSpawnerCommands) {
                 ));
             });
         });
+}
+
+fn spawn_ambient_shapes(root: &mut ChildSpawnerCommands) {
+    root.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: px(420),
+            height: px(420),
+            right: px(-180),
+            top: px(-210),
+            border_radius: BorderRadius::MAX,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.22, 0.55, 0.50, 0.07)),
+    ));
+    root.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: px(360),
+            height: px(360),
+            left: px(-180),
+            bottom: px(-210),
+            border_radius: BorderRadius::MAX,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.91, 0.68, 0.29, 0.055)),
+    ));
+}
+
+fn spawn_top_bar(root: &mut ChildSpawnerCommands) {
+    root.spawn((
+        Node {
+            width: percent(100),
+            height: px(58),
+            padding: UiRect::axes(px(30), px(0)),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::SpaceBetween,
+            border: UiRect::bottom(px(1)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.02, 0.025, 0.038, 0.72)),
+        BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.07)),
+    ))
+    .with_children(|bar| {
+        bar.spawn((
+            Text::new("ARCANA TABLE  /  MARKET"),
+            TextFont { font_size: 15.0, ..default() },
+            TextColor(CREAM),
+        ));
+        bar.spawn((
+            Text::new("TURN 1  /  PLAYER 1"),
+            TextFont { font_size: 12.0, ..default() },
+            TextColor(GOLD),
+            TurnText,
+        ));
+    });
+}
+
+fn spawn_noble_board(root: &mut ChildSpawnerCommands, model: &BattleModel) {
+    root
+        .spawn((
+            Node {
+                width: percent(100),
+                height: px(64),
+                align_items: AlignItems::Center,
+                column_gap: px(10),
+                padding: UiRect::axes(px(12), px(6)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(10)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.05, 0.05, 0.07, 0.85)),
+            BorderColor::all(GOLD.with_alpha(0.3)),
+            NobleBoardArea,
+        ))
+        .with_children(|board| {
+            board.spawn((
+                Text::new("NOBLES"),
+                TextFont { font_size: 9.0, ..default() },
+                TextColor(GOLD),
+            ));
+            for noble in &model.0.nobles.available {
+                spawn_noble_badge(board, noble.id, noble.requirement, noble.prestige);
+            }
+        });
+}
+
+fn spawn_noble_badge(
+    parent: &mut ChildSpawnerCommands,
+    id: NobleId,
+    req: GemCost,
+    prestige: u8,
+) {
+    parent
+        .spawn((
+            Node {
+                width: px(48),
+                height: px(48),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(8)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.91, 0.68, 0.29, 0.12)),
+            BorderColor::all(GOLD.with_alpha(0.6)),
+            NobleBadgeOnBoard(id),
+        ))
+        .with_children(|b| {
+            b.spawn((
+                Text::new(format!("{prestige}P {req_w}.{req_b}.{req_g}.{req_r}.{req_k}",
+                    req_w = req.white, req_b = req.blue, req_g = req.green, req_r = req.red, req_k = req.black)),
+                TextFont { font_size: 7.0, ..default() },
+                TextColor(CREAM),
+                TextLayout::new_with_justify(Justify::Center),
+            ));
+        });
+}
+
+fn spawn_footer(root: &mut ChildSpawnerCommands) {
+    root.spawn(Node {
+        width: percent(100),
+        height: px(48),
+        padding: UiRect::axes(px(30), px(0)),
+        align_items: AlignItems::Center,
+        justify_content: JustifyContent::SpaceBetween,
+        ..default()
+    })
+    .with_children(|footer| {
+        footer.spawn((
+            Text::new("CLICK BUY / R RESERVE / CLICK TOKEN x2 / TAKE 3 / ESC MENU"),
+            TextFont { font_size: 9.0, ..default() },
+            TextColor(MUTED),
+        ));
+        footer.spawn((
+            Text::new("Choose an action."),
+            TextFont { font_size: 10.0, ..default() },
+            TextColor(GOLD),
+            StatusText,
+        ));
+    });
 }
 
 // === 辅助函数 ===
