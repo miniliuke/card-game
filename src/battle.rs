@@ -39,6 +39,7 @@ impl Plugin for BattlePlugin {
                 Update,
                 (
                     mouse_actions.run_if(input_gate),
+                    keyboard_actions.run_if(input_gate),
                     discard_overlay_input,
                     noble_overlay_input,
                     gameover_overlay_input,
@@ -49,6 +50,7 @@ impl Plugin for BattlePlugin {
                     animate_deals,
                     refresh_battle_ui,
                     refresh_selection_hud,
+                    highlight_selected_supply,
                     update_focus_visuals,
                     button_hover_effects,
                     responsive_battle_layout,
@@ -691,6 +693,10 @@ fn spawn_market_row(parent: &mut ChildSpawnerCommands, level: CardLevel, model: 
                 BackgroundColor(Color::srgba(0.03, 0.035, 0.05, 0.8)),
                 BorderColor::all(GOLD.with_alpha(0.32 + level.index() as f32 * 0.12)),
                 DeckReserveButton(level),
+                Focusable {
+                    zone: FocusZone::DeckReserve { level },
+                    normal_border: GOLD.with_alpha(0.32 + level.index() as f32 * 0.12),
+                },
             ))
             .with_children(|deck| {
                 deck.spawn((
@@ -775,6 +781,10 @@ fn spawn_card_button(
             }]),
             CardButton { level, slot },
             BattleAction::BuyVisibleCard { level, idx: slot },
+            Focusable {
+                zone: FocusZone::Market { level, slot },
+                normal_border: gem_color(card.color.to_gem()).with_alpha(0.68),
+            },
         ))
         .with_children(|face| {
             face.spawn(Node {
@@ -934,6 +944,10 @@ fn spawn_supply_button(parent: &mut ChildSpawnerCommands, color: GemColor, model
             BorderColor::all(gem_color(color).with_alpha(0.55)),
             UiTransform::default(),
             SupplyButton(color),
+            Focusable {
+                zone: FocusZone::Supply { color },
+                normal_border: gem_color(color).with_alpha(0.55),
+            },
         ))
         .with_children(|token| {
             token
@@ -1024,6 +1038,10 @@ fn spawn_selection_hud(market: &mut ChildSpawnerCommands) {
                 BackgroundColor(GOLD.with_alpha(0.3)),
                 BorderColor::all(GOLD.with_alpha(0.5)),
                 ConfirmTake3Button,
+                Focusable {
+                    zone: FocusZone::ConfirmTake3,
+                    normal_border: GOLD.with_alpha(0.5),
+                },
             ))
             .with_children(|b| {
                 b.spawn((
@@ -1046,6 +1064,10 @@ fn spawn_selection_hud(market: &mut ChildSpawnerCommands) {
                 BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.05)),
                 BorderColor::all(OUTLINE),
                 ClearSelectionButton,
+                Focusable {
+                    zone: FocusZone::ClearSelection,
+                    normal_border: OUTLINE,
+                },
             ))
             .with_children(|b| {
                 b.spawn((
@@ -1988,6 +2010,105 @@ fn gameover_overlay_input(
         if matches!(*interaction, Interaction::Pressed) {
             next_state.set(AppState::Menu);
         }
+    }
+}
+
+fn keyboard_actions(
+    keys: Res<ButtonInput<KeyCode>>,
+    focusables: Query<&Focusable>,
+    mut focus: ResMut<FocusCursor>,
+    mut queue: ResMut<ActionQueue>,
+    mut picker: ResMut<TokenPicker>,
+    model: Res<BattleModel>,
+    mut next_state: ResMut<NextState<AppState>>,
+) {
+    if keys.just_pressed(KeyCode::Escape) {
+        next_state.set(AppState::Menu);
+        return;
+    }
+    if keys.just_pressed(KeyCode::Tab) {
+        // 简化：在所有 focusable zone 间循环（按查询顺序）
+        let zones: Vec<FocusZone> = focusables.iter().map(|f| f.zone).collect();
+        if let Some(idx) = zones.iter().position(|z| *z == focus.zone) {
+            focus.zone = zones[(idx + 1) % zones.len()];
+        } else {
+            focus.zone = zones[0];
+        }
+    }
+    // Enter 激活当前 zone
+    if keys.just_pressed(KeyCode::Enter) {
+        match focus.zone {
+            FocusZone::Market { level, slot } => {
+                queue.0.push(BattleAction::BuyVisibleCard { level, idx: slot });
+            }
+            FocusZone::DeckReserve { level } => {
+                queue.0.push(BattleAction::ReserveDeckCard(level));
+            }
+            FocusZone::Supply { color } => {
+                if picker.selected.len() < 3
+                    && !picker.selected.contains(&color)
+                    && model.0.bank.tokens.get(color) >= 1
+                {
+                    picker.selected.push(color);
+                }
+            }
+            FocusZone::SupplyX2 { color } => {
+                queue.0.push(BattleAction::TakeTwoSameTokens(color));
+                picker.selected.clear();
+            }
+            FocusZone::ConfirmTake3 => {
+                if picker.selected.len() == 3 {
+                    let t = Triple([picker.selected[0], picker.selected[1], picker.selected[2]]);
+                    queue.0.push(BattleAction::TakeThreeDifferentTokens(t));
+                    picker.selected.clear();
+                }
+            }
+            FocusZone::ClearSelection => {
+                picker.selected.clear();
+            }
+            FocusZone::Reserved { player, idx } => {
+                if player == model.0.current_id() {
+                    queue.0.push(BattleAction::BuyReservedCard(idx));
+                }
+            }
+            FocusZone::ReserveMarket { level, slot } => {
+                queue.0.push(BattleAction::ReserveVisibleCard { level, idx: slot });
+            }
+        }
+    }
+    // 方向键：市场内 3x4 移动
+    if let FocusZone::Market { level, slot } = focus.zone {
+        let (mut lvl_idx, mut s) = (level.index(), slot);
+        if keys.just_pressed(KeyCode::ArrowLeft) { s = s.saturating_sub(1); }
+        if keys.just_pressed(KeyCode::ArrowRight) { s = (s + 1).min(VISIBLE_PER_LEVEL - 1); }
+        if keys.just_pressed(KeyCode::ArrowUp) { lvl_idx = (lvl_idx + 1).min(2); }
+        if keys.just_pressed(KeyCode::ArrowDown) { lvl_idx = lvl_idx.saturating_sub(1); }
+        focus.zone = FocusZone::Market { level: level_of(lvl_idx), slot: s };
+    }
+}
+
+fn level_of(idx: usize) -> CardLevel {
+    match idx {
+        0 => CardLevel::Level1,
+        1 => CardLevel::Level2,
+        _ => CardLevel::Level3,
+    }
+}
+
+fn highlight_selected_supply(
+    picker: Res<TokenPicker>,
+    mut supply: Query<(&SupplyButton, &mut BorderColor)>,
+) {
+    if !picker.is_changed() {
+        return;
+    }
+    for (btn, mut border) in &mut supply {
+        let selected = picker.selected.contains(&btn.0);
+        *border = BorderColor::all(if selected {
+            GOLD_BRIGHT
+        } else {
+            gem_color(btn.0).with_alpha(0.55)
+        });
     }
 }
 
