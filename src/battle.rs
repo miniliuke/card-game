@@ -91,6 +91,39 @@ impl BattleAction {
 #[derive(Component)]
 struct BattleRoot;
 
+#[derive(Component)]
+struct PlayerPanel(PlayerId);
+
+#[derive(Component)]
+struct PlayerScoreText(PlayerId);
+
+#[derive(Component)]
+struct PlayerStateText(PlayerId);
+
+#[derive(Component)]
+struct PlayerColorText {
+    player: PlayerId,
+    color: GemColor,
+}
+
+#[derive(Component)]
+struct PlayerGoldText(PlayerId);
+
+/// 保留卡行容器（每玩家一个）。
+#[derive(Component)]
+struct ReservedRow(PlayerId);
+
+/// 单张保留卡按钮（owner 面板上可 Buy）。
+#[derive(Component)]
+struct ReservedCardButton {
+    player: PlayerId,
+    idx: usize,
+}
+
+/// 贵族行容器。
+#[derive(Component)]
+struct NoblesRow(PlayerId);
+
 #[derive(Resource, Default)]
 struct AnimationCounts {
     flying: usize,
@@ -238,7 +271,11 @@ fn setup_battle(mut commands: Commands) {
             }),
             BattleScreen,
             BattleRoot,
-        ));
+        ))
+        .with_children(|root| {
+            spawn_player_panel(root, 0);
+            spawn_player_panel(root, 1);
+        });
 }
 
 fn cleanup_battle(
@@ -256,6 +293,154 @@ fn cleanup_battle(
     commands.remove_resource::<DiscardBuffer>();
     commands.remove_resource::<TurnCount>();
     ui_scale.0 = 1.0;
+}
+
+fn spawn_player_panel(parent: &mut ChildSpawnerCommands, player: PlayerId) {
+    parent
+        .spawn((
+            Node {
+                width: percent(19),
+                min_width: px(205),
+                max_width: px(270),
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::all(px(16)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(12)),
+                row_gap: px(10),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.055, 0.063, 0.085, 0.92)),
+            BorderColor::all(if player == 0 { GOLD } else { OUTLINE }),
+            BoxShadow(vec![ShadowStyle {
+                color: Color::srgba(0.0, 0.0, 0.0, 0.26),
+                x_offset: px(0),
+                y_offset: px(12),
+                spread_radius: px(0),
+                blur_radius: px(26),
+            }]),
+            PlayerPanel(player),
+        ))
+        .with_children(|panel| {
+            // Header: name + score
+            panel
+                .spawn(Node {
+                    width: percent(100),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::SpaceBetween,
+                    margin: UiRect::bottom(px(4)),
+                    ..default()
+                })
+                .with_children(|header| {
+                    header.spawn((
+                        Text::new(format!("PLAYER {}", player + 1)),
+                        TextFont { font_size: 15.0, ..default() },
+                        TextColor(CREAM),
+                    ));
+                    header.spawn((
+                        Text::new("0 PTS"),
+                        TextFont { font_size: 11.0, ..default() },
+                        TextColor(GOLD),
+                        PlayerScoreText(player),
+                    ));
+                });
+            // State line
+            panel.spawn((
+                Text::new("WAITING"),
+                TextFont { font_size: 9.0, ..default() },
+                TextColor(MUTED),
+                PlayerStateText(player),
+            ));
+            // 5 normal color rows
+            for color in GemColor::NORMAL {
+                spawn_player_color_row(panel, player, color);
+            }
+            // Gold row
+            spawn_player_gold_row(panel, player);
+            // Reserved row container
+            panel
+                .spawn((Node { width: percent(100), row_gap: px(4), ..default() }, ReservedRow(player)))
+                .with_children(|row| {
+                    row.spawn((
+                        Text::new("RESERVED (0/3)"),
+                        TextFont { font_size: 8.0, ..default() },
+                        TextColor(MUTED.with_alpha(0.7)),
+                    ));
+                });
+            // Nobles row container
+            panel
+                .spawn((Node { width: percent(100), ..default() }, NoblesRow(player)))
+                .with_children(|row| {
+                    row.spawn((
+                        Text::new("NOBLES"),
+                        TextFont { font_size: 8.0, ..default() },
+                        TextColor(MUTED.with_alpha(0.7)),
+                    ));
+                });
+            // Filler
+            panel.spawn(Node { flex_grow: 1.0, ..default() });
+        });
+}
+
+fn spawn_player_color_row(parent: &mut ChildSpawnerCommands, player: PlayerId, color: GemColor) {
+    parent
+        .spawn((
+            Node {
+                width: percent(100),
+                min_height: px(40),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::SpaceBetween,
+                padding: UiRect::axes(px(10), px(6)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(8)),
+                ..default()
+            },
+            BackgroundColor(gem_color(color).with_alpha(0.13)),
+            BorderColor::all(gem_color(color).with_alpha(0.38)),
+        ))
+        .with_children(|row| {
+            row.spawn((
+                Text::new(color_name(color)),
+                TextFont { font_size: 10.0, ..default() },
+                TextColor(CREAM),
+            ));
+            row.spawn((
+                Text::new("C 0 / T 0"),
+                TextFont { font_size: 10.0, ..default() },
+                TextColor(CREAM),
+                PlayerColorText { player, color },
+            ));
+        });
+}
+
+fn spawn_player_gold_row(parent: &mut ChildSpawnerCommands, player: PlayerId) {
+    parent
+        .spawn((
+            Node {
+                width: percent(100),
+                min_height: px(32),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::SpaceBetween,
+                padding: UiRect::axes(px(10), px(5)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(8)),
+                ..default()
+            },
+            BackgroundColor(gem_color(GemColor::Gold).with_alpha(0.13)),
+            BorderColor::all(gem_color(GemColor::Gold).with_alpha(0.38)),
+        ))
+        .with_children(|row| {
+            row.spawn((
+                Text::new("GOLD"),
+                TextFont { font_size: 10.0, ..default() },
+                TextColor(CREAM),
+            ));
+            row.spawn((
+                Text::new("T 0"),
+                TextFont { font_size: 10.0, ..default() },
+                TextColor(CREAM),
+                PlayerGoldText(player),
+            ));
+        });
 }
 
 // === 辅助函数 ===
