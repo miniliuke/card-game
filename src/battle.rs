@@ -34,7 +34,17 @@ impl Plugin for BattlePlugin {
             .init_resource::<DiscardBuffer>()
             .init_resource::<TurnCount>()
             .add_systems(OnEnter(AppState::Battle), setup_battle)
-            .add_systems(OnExit(AppState::Battle), cleanup_battle);
+            .add_systems(OnExit(AppState::Battle), cleanup_battle)
+            .add_systems(
+                Update,
+                mouse_actions
+                    .run_if(in_state(AppState::Battle))
+                    .run_if(|phase: Res<BattlePhase>,
+                             anim: Res<AnimationCounts>,
+                             pending: Res<PendingEvents>| {
+                        can_act(&phase, anim.busy(), &pending)
+                    }),
+            );
     }
 }
 
@@ -1099,6 +1109,66 @@ fn spawn_footer(root: &mut ChildSpawnerCommands) {
             StatusText,
         ));
     });
+}
+
+fn mouse_actions(
+    mut interactions: Query<
+        (&Interaction, &mut BorderColor, Option<&BattleAction>, Entity),
+        Changed<Interaction>,
+    >,
+    supply: Query<(&Interaction, &SupplyButton), Changed<Interaction>>,
+    supply_x2: Query<(&Interaction, &SupplyX2Button), Changed<Interaction>>,
+    confirm: Query<&Interaction, (Changed<Interaction>, With<ConfirmTake3Button>)>,
+    clear: Query<&Interaction, (Changed<Interaction>, With<ClearSelectionButton>)>,
+    mut picker: ResMut<TokenPicker>,
+    mut queue: ResMut<ActionQueue>,
+    model: Res<BattleModel>,
+) {
+    // Supply single click -> buffer
+    for (interaction, btn) in &supply {
+        if matches!(*interaction, Interaction::Pressed) {
+            let c = btn.0;
+            if picker.selected.len() < 3
+                && !picker.selected.contains(&c)
+                && model.0.bank.tokens.get(c) >= 1
+            {
+                picker.selected.push(c);
+            }
+        }
+    }
+    // x2 click -> direct enqueue
+    for (interaction, btn) in &supply_x2 {
+        if matches!(*interaction, Interaction::Pressed) {
+            queue.0.push(BattleAction::TakeTwoSameTokens(btn.0));
+            picker.selected.clear();
+        }
+    }
+    // Confirm take 3
+    if let Ok(interaction) = confirm.single() {
+        if matches!(*interaction, Interaction::Pressed) && picker.selected.len() == 3 {
+            let triple = Triple([
+                picker.selected[0],
+                picker.selected[1],
+                picker.selected[2],
+            ]);
+            queue.0.push(BattleAction::TakeThreeDifferentTokens(triple));
+            picker.selected.clear();
+        }
+    }
+    // Clear
+    if let Ok(interaction) = clear.single() {
+        if matches!(*interaction, Interaction::Pressed) {
+            picker.selected.clear();
+        }
+    }
+    // BattleAction buttons (market buy / reserve market / deck / reserved)
+    for (interaction, _border, action, _entity) in &mut interactions {
+        if matches!(*interaction, Interaction::Pressed) {
+            if let Some(a) = action {
+                queue.0.push(*a);
+            }
+        }
+    }
 }
 
 // === 辅助函数 ===
