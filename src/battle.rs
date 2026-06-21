@@ -24,6 +24,15 @@ pub struct BattlePlugin;
 impl Plugin for BattlePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AnimationCounts>()
+            .init_resource::<ActionQueue>()
+            .init_resource::<FocusCursor>()
+            .init_resource::<UiDirty>()
+            .init_resource::<PendingEvents>()
+            .init_resource::<PendingPhase>()
+            .init_resource::<PendingNobleCandidates>()
+            .init_resource::<TokenPicker>()
+            .init_resource::<DiscardBuffer>()
+            .init_resource::<TurnCount>()
             .add_systems(OnEnter(AppState::Battle), setup_battle)
             .add_systems(OnExit(AppState::Battle), cleanup_battle);
     }
@@ -127,6 +136,55 @@ struct PendingPhase(Option<BattlePhase>);
 #[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
 struct PendingNobleCandidates(Option<Vec<NobleId>>);
 
+#[derive(Resource, Default)]
+struct ActionQueue(Vec<BattleAction>);
+
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+struct FocusCursor {
+    zone: FocusZone,
+}
+
+#[derive(Resource)]
+struct UiDirty(bool);
+
+impl Default for UiDirty {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// 拿筹码选择缓冲区（TakeThreeDifferentTokens）。选满 3 后 Confirm 提交。
+#[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
+struct TokenPicker {
+    selected: Vec<GemColor>,
+}
+
+/// 弃牌覆盖层：玩家选择归还的筹码。total 必须等于 excess。
+#[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
+struct DiscardBuffer {
+    returned: TokenSet,
+    excess: u8,
+}
+
+/// 键盘焦点区域。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FocusZone {
+    Market { level: CardLevel, slot: usize },
+    DeckReserve { level: CardLevel },
+    Supply { color: GemColor },
+    SupplyX2 { color: GemColor },
+    ConfirmTake3,
+    ClearSelection,
+    Reserved { player: PlayerId, idx: usize },
+    ReserveMarket { level: CardLevel, slot: usize },
+}
+
+impl Default for FocusZone {
+    fn default() -> Self {
+        Self::Market { level: CardLevel::Level1, slot: 0 }
+    }
+}
+
 /// 纯函数：判定此刻是否应把 PendingPhase 提交为 BattlePhase。
 /// 条件：事件队列空 && 不忙 && PendingPhase 非空。
 fn should_commit_phase(
@@ -143,8 +201,44 @@ fn can_act(phase: &BattlePhase, busy: bool, pending: &PendingEvents) -> bool {
     matches!(phase, BattlePhase::Idle) && !busy && pending.0.is_empty()
 }
 
-fn setup_battle(_commands: Commands) {
-    // 占位；后续 Task 填充
+fn setup_battle(mut commands: Commands) {
+    let seed = now_seed();
+    let state = GameState::new_seeded(2, seed).expect("2-player game always valid");
+
+    commands.insert_resource(BattleModel(state));
+    commands.insert_resource(BattlePhase::Idle);
+    commands.init_resource::<PendingEvents>();
+    commands.init_resource::<PendingPhase>();
+    commands.init_resource::<PendingNobleCandidates>();
+    commands.init_resource::<TokenPicker>();
+    commands.init_resource::<DiscardBuffer>();
+    commands.init_resource::<TurnCount>();
+    commands.insert_resource(FocusCursor::default());
+    commands.insert_resource(ActionQueue::default());
+    commands.insert_resource(AnimationCounts::default());
+    commands.insert_resource(UiDirty(true));
+
+    commands
+        .spawn((
+            Node {
+                width: percent(100),
+                height: percent(100),
+                flex_direction: FlexDirection::Column,
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundGradient::from(LinearGradient {
+                angle: 2.35,
+                stops: vec![
+                    ColorStop::new(INK, percent(0)),
+                    ColorStop::new(Color::srgb(0.07, 0.055, 0.085), percent(52)),
+                    ColorStop::new(Color::srgb(0.025, 0.072, 0.075), percent(100)),
+                ],
+                ..default()
+            }),
+            BattleScreen,
+            BattleRoot,
+        ));
 }
 
 fn cleanup_battle(
@@ -152,9 +246,16 @@ fn cleanup_battle(
     screen: Single<Entity, With<BattleScreen>>,
     mut ui_scale: ResMut<UiScale>,
 ) {
-    let _ = screen;
-    let _ = ui_scale;
-    commands.spawn_empty(); // 占位避免未用警告
+    commands.entity(*screen).despawn();
+    commands.remove_resource::<BattleModel>();
+    commands.remove_resource::<BattlePhase>();
+    commands.remove_resource::<PendingEvents>();
+    commands.remove_resource::<PendingPhase>();
+    commands.remove_resource::<PendingNobleCandidates>();
+    commands.remove_resource::<TokenPicker>();
+    commands.remove_resource::<DiscardBuffer>();
+    commands.remove_resource::<TurnCount>();
+    ui_scale.0 = 1.0;
 }
 
 // === 辅助函数 ===
