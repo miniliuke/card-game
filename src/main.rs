@@ -7,6 +7,7 @@ use bevy::{
 
 mod battle;
 mod game;
+mod rules;
 
 #[derive(States, Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum AppState {
