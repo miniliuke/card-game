@@ -42,6 +42,8 @@ impl Plugin for BattlePlugin {
                     apply_actions,
                     play_events,
                     commit_pending_phase,
+                    animate_flights,
+                    animate_deals,
                 )
                     .chain()
                     .run_if(in_state(AppState::Battle)),
@@ -1285,24 +1287,44 @@ fn rule_error_message(e: RuleError) -> &'static str {
 }
 
 fn play_events(
+    mut commands: Commands,
+    root: Single<Entity, With<BattleRoot>>,
     mut pending: ResMut<PendingEvents>,
     mut anim: ResMut<AnimationCounts>,
     mut dirty: ResMut<UiDirty>,
     mut status: Single<&mut Text, With<StatusText>>,
     model: Res<BattleModel>,
+    card_slots: Query<(Entity, &CardSlot)>,
 ) {
     if pending.0.is_empty() {
         return;
     }
-    // 每帧消费一个事件（动画细节后续 Task；此处先置 dirty + status）
     let event = pending.0.remove(0);
+    let active = model.0.current_id();
+    let dir = if active == 0 { -1.0 } else { 1.0 };
     match &event {
         GameEvent::TokensTaken { player, tokens } => {
-            let _ = tokens;
             ***status = format!("Player {} took tokens.", player + 1);
+            let n = tokens.total();
+            for (i, c) in GemColor::NORMAL.iter().enumerate() {
+                let amt = tokens.get(*c);
+                if amt > 0 {
+                    spawn_fly_coin(&mut commands, *root, *c, dir, i as f32, *player, n);
+                    anim.flying += 1;
+                }
+            }
         }
-        GameEvent::TokensReturned { player, .. } => {
+        GameEvent::TokensReturned { player, tokens } => {
             ***status = format!("Player {} returned tokens.", player + 1);
+            for c in GemColor::NORMAL {
+                let amt = tokens.get(c);
+                if amt > 0 {
+                    for _ in 0..amt {
+                        spawn_fly_coin_back(&mut commands, *root, c, dir, *player);
+                        anim.flying += 1;
+                    }
+                }
+            }
         }
         GameEvent::CardReserved { player, got_gold, .. } => {
             ***status = format!(
@@ -1310,13 +1332,61 @@ fn play_events(
                 player + 1,
                 if *got_gold { " (+gold)" } else { "" }
             );
+            spawn_fly_card(&mut commands, *root, dir, *player);
+            anim.flying += 1;
+            if *got_gold {
+                spawn_fly_coin(&mut commands, *root, GemColor::Gold, dir, 0.0, *player, 1);
+                anim.flying += 1;
+            }
         }
-        GameEvent::CardPurchased { player, card, .. } => {
-            ***status = format!("Player {} bought card #{}.", player + 1, card);
+        GameEvent::CardPurchased { player, paid, .. } => {
+            ***status = format!("Player {} bought a card.", player + 1);
+            spawn_fly_card(&mut commands, *root, dir, *player);
+            anim.flying += 1;
+            for c in GemColor::NORMAL {
+                let amt = paid.get(c);
+                if amt > 0 {
+                    for _ in 0..amt {
+                        spawn_fly_coin_back(&mut commands, *root, c, dir, *player);
+                        anim.flying += 1;
+                    }
+                }
+            }
         }
-        GameEvent::MarketRefilled { .. } => {}
+        GameEvent::MarketRefilled { level, card } => {
+            // 注：此处用"最末槽"近似定位补牌槽位——markets refill 是 push 到 visible 尾部，
+            // 故 visible 最后一张即新补卡。动画可能落在非实际空槽（视觉瑕疵），但数据正确
+            // （下一帧 refresh 不会重建市场槽，故仅发牌动画的落点可能不准；可接受）。
+            if card.is_some() {
+                if let Some(card_obj) = model.0.market.visible(*level).last() {
+                    if let Some((slot_entity, _)) = card_slots
+                        .iter()
+                        .find(|(_, s)| s.level == *level && model.0.market.visible(*level).len() == s.slot + 1)
+                    {
+                        commands.entity(slot_entity).with_children(|p| {
+                            let mut e = p.spawn((
+                                Node {
+                                    width: percent(100),
+                                    height: percent(100),
+                                    ..default()
+                                },
+                                UiTransform::default(),
+                                DealAnimation {
+                                    timer: Timer::from_seconds(0.34, TimerMode::Once),
+                                },
+                            ));
+                            let _ = e;
+                            spawn_card_button_inner(p, *card_obj, *level);
+                        });
+                        anim.dealing += 1;
+                    }
+                }
+            }
+        }
         GameEvent::NobleVisited { player, noble } => {
             ***status = format!("Player {} was visited by noble #{}.", player + 1, noble);
+            spawn_fly_noble(&mut commands, *root, dir, *player);
+            anim.flying += 1;
         }
         GameEvent::EndGameTriggered { player } => {
             ***status = format!("Player {} reached 15! Final round.", player + 1);
@@ -1329,8 +1399,164 @@ fn play_events(
             );
         }
     }
-    let _ = (&mut anim, &model);
     dirty.0 = true;
+}
+
+/// 卡面 spawn（无 Buy/Reserve 按钮，纯视觉，用于发牌动画）。
+fn spawn_card_button_inner(parent: &mut ChildSpawnerCommands, card: DevelopmentCard, level: CardLevel) {
+    parent
+        .spawn((
+            Node {
+                width: percent(100),
+                height: percent(100),
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::all(px(9)),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(9)),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundGradient::from(LinearGradient {
+                angle: 2.3,
+                stops: vec![
+                    ColorStop::new(gem_color(card.color.to_gem()).with_alpha(0.26), percent(0)),
+                    ColorStop::new(PANEL, percent(58)),
+                    ColorStop::new(Color::srgb(0.035, 0.039, 0.055), percent(100)),
+                ],
+                ..default()
+            }),
+            BorderColor::all(gem_color(card.color.to_gem()).with_alpha(0.68)),
+        ))
+        .with_children(|face| {
+            face.spawn((
+                Text::new(format!("T{} {}P", level.index() + 1, card.prestige)),
+                TextFont { font_size: 9.0, ..default() },
+                TextColor(GOLD),
+            ));
+        });
+}
+
+fn spawn_fly_coin(
+    commands: &mut Commands,
+    root: Entity,
+    color: GemColor,
+    dir: f32,
+    offset: f32,
+    _player: PlayerId,
+    _total: u8,
+) {
+    commands.entity(root).with_children(|overlay| {
+        overlay
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: px(38),
+                    height: px(38),
+                    left: percent(50),
+                    bottom: px(65.0 + offset * 6.0),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: UiRect::all(px(2)),
+                    border_radius: BorderRadius::MAX,
+                    ..default()
+                },
+                BackgroundColor(gem_color(color)),
+                BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.42)),
+                UiTransform::default(),
+                FlyAnimation {
+                    timer: Timer::from_seconds(0.45, TimerMode::Once),
+                    target: Vec2::new(dir * 500.0, -175.0),
+                },
+            ))
+            .with_children(|coin| {
+                coin.spawn((
+                    Text::new(color_short(color)),
+                    TextFont { font_size: 10.0, ..default() },
+                    TextColor(if matches!(color, GemColor::White) { INK } else { CREAM }),
+                ));
+            });
+    });
+}
+
+fn spawn_fly_coin_back(
+    commands: &mut Commands,
+    root: Entity,
+    color: GemColor,
+    dir: f32,
+    _player: PlayerId,
+) {
+    commands.entity(root).with_children(|overlay| {
+        overlay
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: px(32),
+                    height: px(32),
+                    left: percent(50),
+                    top: percent(50),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: UiRect::all(px(2)),
+                    border_radius: BorderRadius::MAX,
+                    ..default()
+                },
+                BackgroundColor(gem_color(color)),
+                BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.42)),
+                UiTransform::default(),
+                FlyAnimation {
+                    timer: Timer::from_seconds(0.45, TimerMode::Once),
+                    target: Vec2::new(-dir * 0.0, 175.0),
+                },
+            ));
+    });
+}
+
+fn spawn_fly_card(commands: &mut Commands, root: Entity, dir: f32, _player: PlayerId) {
+    commands.entity(root).with_children(|overlay| {
+        overlay.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: px(60),
+                height: px(80),
+                left: percent(50),
+                top: percent(50),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(6)),
+                ..default()
+            },
+            BackgroundColor(PANEL),
+            BorderColor::all(GOLD.with_alpha(0.8)),
+            UiTransform::default(),
+            FlyAnimation {
+                timer: Timer::from_seconds(0.5, TimerMode::Once),
+                target: Vec2::new(dir * 520.0, 150.0),
+            },
+        ));
+    });
+}
+
+fn spawn_fly_noble(commands: &mut Commands, root: Entity, dir: f32, _player: PlayerId) {
+    commands.entity(root).with_children(|overlay| {
+        overlay.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: px(44),
+                height: px(44),
+                left: percent(50),
+                top: px(70),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(8)),
+                ..default()
+            },
+            BackgroundColor(GOLD.with_alpha(0.3)),
+            BorderColor::all(GOLD_BRIGHT),
+            UiTransform::default(),
+            FlyAnimation {
+                timer: Timer::from_seconds(0.6, TimerMode::Once),
+                target: Vec2::new(dir * 500.0, 150.0),
+            },
+        ));
+    });
 }
 
 fn commit_pending_phase(
@@ -1357,6 +1583,48 @@ fn commit_pending_phase(
         }
         BattlePhase::Idle => {}
     }
+}
+
+fn animate_flights(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut FlyAnimation, &mut UiTransform)>,
+    mut anim: ResMut<AnimationCounts>,
+    mut dirty: ResMut<UiDirty>,
+) {
+    for (entity, mut animation, mut transform) in &mut query {
+        animation.timer.tick(time.delta());
+        let t = animation.timer.fraction();
+        let eased = 1.0 - (1.0 - t).powi(3);
+        transform.translation = Val2::px(animation.target.x * eased, animation.target.y * eased);
+        transform.scale = Vec2::splat(1.0 - eased * 0.72);
+        if animation.timer.is_finished() {
+            commands.entity(entity).despawn();
+            anim.flying = anim.flying.saturating_sub(1);
+            dirty.0 = true;
+        }
+    }
+}
+
+fn animate_deals(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut DealAnimation, &mut UiTransform)>,
+    mut anim: ResMut<AnimationCounts>,
+) {
+    for (entity, mut animation, mut transform) in &mut query {
+        animation.timer.tick(time.delta());
+        let t = animation.timer.fraction();
+        let eased = 1.0 - (1.0 - t).powi(3);
+        transform.translation = Val2::px(-145.0 * (1.0 - eased), 0.0);
+        transform.scale = Vec2::splat(0.74 + eased * 0.26);
+        if animation.timer.is_finished() {
+            commands.entity(entity).remove::<DealAnimation>();
+            *transform = UiTransform::default();
+            anim.dealing = anim.dealing.saturating_sub(1);
+        }
+    }
+    let _ = &mut commands;
 }
 
 // === 辅助函数 ===
