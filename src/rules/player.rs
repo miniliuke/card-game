@@ -43,11 +43,11 @@ impl PlayerState {
         bonus
     }
 
-    pub fn token_count(self, color: GemColor) -> u8 {
+    pub fn token_count(&self, color: GemColor) -> u8 {
         self.tokens.get(color)
     }
 
-    pub fn token_total(self) -> u8 {
+    pub fn token_total(&self) -> u8 {
         self.tokens.total()
     }
 
