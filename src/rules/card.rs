@@ -107,7 +107,7 @@ pub struct DevelopmentCard {
 }
 
 /// id -> card 只读索引，供 bonus/score 反查。
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct CardStore {
     map: HashMap<CardId, DevelopmentCard>,
 }

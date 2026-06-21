@@ -13,7 +13,7 @@ pub struct Noble {
     pub requirement: GemCost,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct NobleStore {
     map: HashMap<NobleId, Noble>,
 }

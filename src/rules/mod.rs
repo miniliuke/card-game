@@ -23,7 +23,7 @@ pub use card::{CardBonus, CardId, CardLevel, CardStore, DevelopmentCard, GemCost
 pub use noble::{Noble, NobleBoard, NobleId, NobleStore}; // Task 6
 pub use player::PlayerState; // Task 7
 pub use market::{CardDecks, Market}; // Task 8
-// pub use state::GameState;                                // Task 12
+pub use state::GameState; // Task 12
 // pub use actions::{ActionOutcome, ActionResult, PlayerAction, Resume, apply_action, resume}; // Task 13
 // pub use validation::validate_action;                    // Task 13
 pub use scoring::{calculate_score, compare_players, eligible_nobles}; // Task 10
