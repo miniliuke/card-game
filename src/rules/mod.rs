@@ -27,5 +27,5 @@ pub use market::{CardDecks, Market}; // Task 8
 // pub use actions::{ActionOutcome, ActionResult, PlayerAction, Resume, apply_action, resume}; // Task 13
 // pub use validation::validate_action;                    // Task 13
 // pub use scoring::{calculate_score, compare_players, eligible_nobles}; // Task 10
-// pub use events::GameEvent;                               // Task 9
+pub use events::GameEvent; // Task 9
 pub use error::RuleError; // Task 3
