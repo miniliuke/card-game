@@ -44,6 +44,11 @@ impl Plugin for BattlePlugin {
                     commit_pending_phase,
                     animate_flights,
                     animate_deals,
+                    refresh_battle_ui,
+                    refresh_selection_hud,
+                    update_focus_visuals,
+                    button_hover_effects,
+                    responsive_battle_layout,
                 )
                     .chain()
                     .run_if(in_state(AppState::Battle)),
@@ -1625,6 +1630,153 @@ fn animate_deals(
         }
     }
     let _ = &mut commands;
+}
+
+#[allow(clippy::too_many_arguments)]
+fn refresh_battle_ui(
+    mut commands: Commands,
+    model: Res<BattleModel>,
+    mut dirty: ResMut<UiDirty>,
+    mut turn: ResMut<TurnCount>,
+    mut texts: ParamSet<(
+        Query<&mut Text, With<TurnText>>,
+        Query<(&PlayerScoreText, &mut Text)>,
+        Query<(&PlayerColorText, &mut Text)>,
+        Query<(&PlayerGoldText, &mut Text)>,
+        Query<(&DeckCountText, &mut Text)>,
+        Query<(&SupplyCountText, &mut Text)>,
+        Query<&mut Text, With<SelectionHudText>>,
+        Query<(&PlayerStateText, &mut Text, &mut TextColor)>,
+    )>,
+    mut panels: Query<(&PlayerPanel, &mut BorderColor)>,
+    reserved_rows: Query<(Entity, &ReservedRow)>,
+    nobles_rows: Query<(Entity, &NoblesRow)>,
+    status: Single<&mut Text, With<StatusText>>,
+) {
+    if !dirty.0 {
+        return;
+    }
+    dirty.0 = false;
+
+    if let Ok(mut t) = texts.p0().single_mut() {
+        **t = format!(
+            "TURN {}  /  PLAYER {}{}",
+            turn.0 + 1,
+            model.0.current_id() + 1,
+            if model.0.end_triggered { "  /  FINAL" } else { "" }
+        );
+    }
+    {
+        let mut scores = texts.p1();
+        for (m, mut text) in &mut scores {
+            **text = format!("{} PTS", model.0.player(m.0).score(&model.0.card_store, &model.0.noble_store));
+        }
+    }
+    {
+        let mut colors = texts.p2();
+        for (m, mut text) in &mut colors {
+            let p = model.0.player(m.player);
+            let bonus = p.bonus(&model.0.card_store);
+            **text = format!("C {} / T {}", bonus.get(card_color_of(m.color)), p.token_count(m.color));
+        }
+    }
+    {
+        let mut golds = texts.p3();
+        for (m, mut text) in &mut golds {
+            **text = format!("T {}", model.0.player(m.0).token_count(GemColor::Gold));
+        }
+    }
+    {
+        let mut decks = texts.p4();
+        for (m, mut text) in &mut decks {
+            let remaining = model.0.decks.remaining(m.0);
+            **text = if remaining == 0 { "EMPTY".into() } else { format!("{remaining:02}") };
+        }
+    }
+    {
+        let mut supplies = texts.p5();
+        for (m, mut text) in &mut supplies {
+            **text = format!("x{}", model.0.bank.tokens.get(m.0));
+        }
+    }
+    {
+        let _ = status;
+    }
+    {
+        if let Ok(mut hud) = texts.p6().single_mut() {
+            // selection HUD count — picker not queried here；由 refresh_selection_hud 独立刷新。
+            **hud = "0/3".to_string();
+        }
+    }
+    {
+        let mut states = texts.p7();
+        for (m, mut text, mut color) in &mut states {
+            let active = m.0 == model.0.current_id();
+            **text = if active { "ACTIVE".into() } else { "WAITING".into() };
+            color.0 = if active { GOLD } else { MUTED };
+        }
+    }
+    for (panel, mut border) in &mut panels {
+        *border = BorderColor::all(if panel.0 == model.0.current_id() { GOLD } else { OUTLINE });
+    }
+    let _ = (&mut commands, &reserved_rows, &nobles_rows, &mut turn);
+}
+
+/// GemColor(普通) -> CardColor 反查（用于 bonus.get(CardColor)）。
+fn card_color_of(g: GemColor) -> CardColor {
+    match g {
+        GemColor::White => CardColor::White,
+        GemColor::Blue => CardColor::Blue,
+        GemColor::Green => CardColor::Green,
+        GemColor::Red => CardColor::Red,
+        GemColor::Black => CardColor::Black,
+        GemColor::Gold => CardColor::White, // 不应发生
+    }
+}
+
+fn refresh_selection_hud(
+    picker: Res<TokenPicker>,
+    model: Res<BattleModel>,
+    mut hud: Single<&mut Text, With<SelectionHudText>>,
+) {
+    ***hud = format!("{}/3", picker.selected.len());
+    // 高亮已选 supply 按钮（边框）由 update_focus_visuals 统一处理颜色，此处只更新计数。
+    let _ = model;
+}
+
+fn button_hover_effects(
+    mut buttons: Query<(&Interaction, &mut UiTransform), Without<FlyAnimation>>,
+) {
+    for (interaction, mut transform) in &mut buttons {
+        transform.scale = Vec2::splat(match *interaction {
+            Interaction::Pressed => 0.98,
+            Interaction::Hovered => 1.03,
+            Interaction::None => 1.0,
+        });
+    }
+}
+
+fn update_focus_visuals(
+    focus: Res<FocusCursor>,
+    mut items: Query<(&Focusable, &mut BorderColor), Without<FlyAnimation>>,
+) {
+    if !focus.is_changed() {
+        return;
+    }
+    for (item, mut border) in &mut items {
+        *border = BorderColor::all(if item.zone == focus.zone {
+            GOLD_BRIGHT
+        } else {
+            item.normal_border
+        });
+    }
+}
+
+fn responsive_battle_layout(
+    window: Single<&Window, With<PrimaryWindow>>,
+    mut ui_scale: ResMut<UiScale>,
+) {
+    ui_scale.0 = (window.height() / 720.0).clamp(1.0, 1.25);
 }
 
 // === 辅助函数 ===
