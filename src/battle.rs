@@ -18,6 +18,7 @@ const GOLD_BRIGHT: Color = Color::srgb(1.0, 0.82, 0.44);
 const OUTLINE: Color = Color::srgba(1.0, 1.0, 1.0, 0.11);
 
 const VISIBLE_PER_LEVEL: usize = 4;
+const PLAYER_COUNT: usize = 2;
 
 pub struct BattlePlugin;
 
@@ -396,7 +397,7 @@ fn final_noble_candidates(outcome: &ActionOutcome) -> Option<Vec<NobleId>> {
 
 fn setup_battle(mut commands: Commands) {
     let seed = now_seed();
-    let state = GameState::new_seeded(2, seed).expect("2-player game always valid");
+    let state = GameState::new_seeded(PLAYER_COUNT, seed).expect("2-4 player game always valid");
     let model = BattleModel(state);
 
     commands.insert_resource(BattlePhase::Idle);
@@ -449,9 +450,15 @@ fn setup_battle(mut commands: Commands) {
                 ..default()
             })
             .with_children(|main| {
-                spawn_player_panel(main, 0);
-                spawn_market(main, &model);
-                spawn_player_panel(main, 1);
+                if PLAYER_COUNT == 2 {
+                    spawn_player_panel(main, 0);
+                    spawn_market(main, &model);
+                    spawn_player_panel(main, 1);
+                } else {
+                    spawn_market(main, &model);
+                    // 3/4 人：底部一排 compact 卡片
+                    spawn_compact_panels(main, &model);
+                }
             });
             spawn_footer(root);
         });
@@ -621,6 +628,58 @@ fn spawn_player_gold_row(parent: &mut ChildSpawnerCommands, player: PlayerId) {
                 TextColor(CREAM),
                 PlayerGoldText(player),
             ));
+        });
+}
+
+fn spawn_compact_panels(parent: &mut ChildSpawnerCommands, model: &BattleModel) {
+    parent
+        .spawn(Node {
+            width: percent(100),
+            flex_direction: FlexDirection::Row,
+            column_gap: px(8),
+            justify_content: JustifyContent::Center,
+            ..default()
+        })
+        .with_children(|row| {
+            for pid in 0..PLAYER_COUNT {
+                row.spawn((
+                    Node {
+                        width: percent(28),
+                        min_width: px(180),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(px(10)),
+                        border: UiRect::all(px(1)),
+                        border_radius: BorderRadius::all(px(8)),
+                        row_gap: px(4),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.055, 0.063, 0.085, 0.92)),
+                    BorderColor::all(if pid == model.0.current_id() { GOLD } else { OUTLINE }),
+                    PlayerPanel(pid),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new(format!("P{} — 0 PTS", pid + 1)),
+                        TextFont { font_size: 12.0, ..default() },
+                        TextColor(CREAM),
+                        PlayerScoreText(pid),
+                    ));
+                    let p = model.0.player(pid);
+                    panel.spawn((
+                        Text::new(format!(
+                            "R:{}/3 N:{}",
+                            p.reserved_cards.len(),
+                            p.nobles.len()
+                        )),
+                        TextFont { font_size: 9.0, ..default() },
+                        TextColor(MUTED),
+                    ));
+                    // active 玩家展开 reserved 详情
+                    if pid == model.0.current_id() {
+                        panel.spawn((Node { width: percent(100), ..default() }, ReservedRow(pid)));
+                    }
+                });
+            }
         });
 }
 
@@ -2241,7 +2300,84 @@ fn refresh_battle_ui(
     for (panel, mut border) in &mut panels {
         *border = BorderColor::all(if panel.0 == model.0.current_id() { GOLD } else { OUTLINE });
     }
-    let _ = (&mut commands, &reserved_rows, &nobles_rows, &mut turn);
+    // 重建 reserved 行
+    for (row_entity, row) in &reserved_rows {
+        // 清旧子节点（保留首行标题文本除外——简化：despawn 全部重建）
+        commands.entity(row_entity).despawn_children();
+        let p = model.0.player(row.0);
+        commands.entity(row_entity).with_children(|row_c| {
+            row_c.spawn((
+                Text::new(format!("RESERVED ({}/3)", p.reserved_cards.len())),
+                TextFont { font_size: 8.0, ..default() },
+                TextColor(MUTED.with_alpha(0.7)),
+            ));
+            for (i, &card_id) in p.reserved_cards.iter().enumerate() {
+                if let Some(card) = model.0.card_store.get(card_id) {
+                    let is_owner = row.0 == model.0.current_id();
+                    spawn_reserved_card_mini(row_c, *card, row.0, i, is_owner);
+                }
+            }
+        });
+    }
+    // 重建 nobles 行
+    for (row_entity, row) in &nobles_rows {
+        commands.entity(row_entity).despawn_children();
+        let p = model.0.player(row.0);
+        commands.entity(row_entity).with_children(|row_c| {
+            row_c.spawn((
+                Text::new(format!("NOBLES ({})", p.nobles.len())),
+                TextFont { font_size: 8.0, ..default() },
+                TextColor(MUTED.with_alpha(0.7)),
+            ));
+            for &nid in &p.nobles {
+                if let Some(n) = model.0.noble_store.get(nid) {
+                    row_c.spawn((
+                        Text::new(format!("{}P", n.prestige)),
+                        TextFont { font_size: 10.0, ..default() },
+                        TextColor(GOLD_BRIGHT),
+                    ));
+                }
+            }
+        });
+    }
+    let _ = &mut turn;
+}
+
+fn spawn_reserved_card_mini(
+    parent: &mut ChildSpawnerCommands,
+    card: DevelopmentCard,
+    player: PlayerId,
+    idx: usize,
+    is_owner: bool,
+) {
+    let mut entity = parent.spawn((
+        Node {
+            width: px(70),
+            height: px(44),
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(px(1)),
+            border_radius: BorderRadius::all(px(5)),
+            ..default()
+        },
+        BackgroundColor(gem_color(card.color.to_gem()).with_alpha(0.2)),
+        BorderColor::all(gem_color(card.color.to_gem()).with_alpha(0.5)),
+    ));
+    if is_owner {
+        entity.insert((
+            Button,
+            ReservedCardButton { player, idx },
+            BattleAction::BuyReservedCard(idx),
+        ));
+    }
+    entity.with_children(|c| {
+        c.spawn((
+            Text::new(format!("{}P", card.prestige)),
+            TextFont { font_size: 9.0, ..default() },
+            TextColor(GOLD_BRIGHT),
+        ));
+    });
 }
 
 /// GemColor(普通) -> CardColor 反查（用于 bonus.get(CardColor)）。
