@@ -1,0 +1,16 @@
+[package]
+name = "arcana-table"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Bevy 0.18 is the newest release compatible with the Rust 1.90 toolchain
+# currently installed in this workspace (Bevy 0.19 requires Rust 1.95).
+bevy = "0.18.1"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
