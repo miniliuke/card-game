@@ -2,13 +2,14 @@ use bevy::{
     input_focus::InputFocus,
     prelude::*,
     render::{
-        settings::{Backends, RenderCreation, WgpuSettings},
         RenderPlugin,
+        settings::{Backends, RenderCreation, WgpuSettings},
     },
     ui::{ColorStop, LinearGradient},
     window::{PrimaryWindow, WindowResolution},
 };
 
+mod ai;
 mod battle;
 mod rules;
 
@@ -690,7 +691,7 @@ fn menu_interactions(
                 background.0 = pressed;
                 *border = BorderColor::all(GOLD_BRIGHT);
                 **status.0 = action.0.message().to_string();
-                status.1 .0 = GOLD;
+                status.1.0 = GOLD;
                 if matches!(action.0, MenuAction::NewRun) {
                     next_state.set(AppState::Battle);
                 }

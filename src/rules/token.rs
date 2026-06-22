@@ -2,7 +2,7 @@
 
 use crate::rules::color::{CardColor, GemColor};
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
 pub struct TokenSet {
     pub white: u8,
     pub blue: u8,
@@ -112,13 +112,25 @@ mod tests {
 
     #[test]
     fn total_counts_all_six() {
-        let s = TokenSet { white: 1, blue: 2, green: 3, red: 4, black: 5, gold: 6 };
+        let s = TokenSet {
+            white: 1,
+            blue: 2,
+            green: 3,
+            red: 4,
+            black: 5,
+            gold: 6,
+        };
         assert_eq!(s.total(), 21);
     }
 
     #[test]
     fn bank_take_insufficient_does_not_mutate() {
-        let mut b = Bank { tokens: TokenSet { white: 1, ..Default::default() } };
+        let mut b = Bank {
+            tokens: TokenSet {
+                white: 1,
+                ..Default::default()
+            },
+        };
         assert!(!b.take(GemColor::White, 2));
         assert_eq!(b.tokens.white, 1);
     }
