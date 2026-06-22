@@ -14,7 +14,9 @@
 #![allow(unused_imports)]
 
 mod decision;
+mod determinization;
 mod observation;
 
 pub use decision::{AiDecision, AiError, DecisionContext, DecisionContextKind, SimulationState};
+pub use determinization::{determinize, PrivateKnowledge};
 pub use observation::{AiObservation, InfoSetKey, ObservedPlayer, ObservedReservation};
