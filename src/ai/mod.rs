@@ -15,8 +15,10 @@
 
 mod decision;
 mod determinization;
+mod evaluation;
 mod observation;
 
 pub use decision::{AiDecision, AiError, DecisionContext, DecisionContextKind, SimulationState};
 pub use determinization::{determinize, PrivateKnowledge};
+pub use evaluation::{evaluate, EvaluationWeights};
 pub use observation::{AiObservation, InfoSetKey, ObservedPlayer, ObservedReservation};
