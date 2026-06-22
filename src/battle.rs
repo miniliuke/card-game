@@ -67,10 +67,17 @@ impl Plugin for BattlePlugin {
 }
 
 fn input_gate(
-    phase: Res<BattlePhase>,
+    // BattlePhase 是 Battle 态专属资源（setup_battle 插入 / cleanup_battle 移除）。
+    // 作为 run condition，其参数会在 in_state(Battle) 短路前被校验；
+    // Menu 态下 Res<BattlePhase> 不存在会触发 "Resource does not exist"。
+    // 故用 Option 包裹，缺失时直接返回 false（等价于不可行动）。
+    phase: Option<Res<BattlePhase>>,
     anim: Res<AnimationCounts>,
     pending: Res<PendingEvents>,
 ) -> bool {
+    let Some(phase) = phase else {
+        return false;
+    };
     can_act(&phase, anim.busy(), &pending)
 }
 
@@ -1682,13 +1689,13 @@ fn spawn_fly_noble(commands: &mut Commands, root: Entity, dir: f32, _player: Pla
 }
 
 fn commit_pending_phase(
+    mut commands: Commands,
     pending_events: Res<PendingEvents>,
     anim: Res<AnimationCounts>,
-    phase: Res<BattlePhase>,
-    pending_phase: Res<PendingPhase>,
-    mut phase_mut: ResMut<BattlePhase>,
-    mut pending_phase_mut: ResMut<PendingPhase>,
-    mut commands: Commands,
+    // 单一可变访问：原同时持有 Res<BattlePhase>/Res<PendingPhase> + ResMut 同资源
+    // 触发 Bevy B0002（Res 与 ResMut 冲突）。这里只用 ResMut，读取经 &* 解引用。
+    mut phase: ResMut<BattlePhase>,
+    mut pending_phase: ResMut<PendingPhase>,
     root: Single<Entity, With<BattleRoot>>,
     overlays: Query<Entity, With<Overlay>>,
     mut discard_buf: ResMut<DiscardBuffer>,
@@ -1702,8 +1709,8 @@ fn commit_pending_phase(
     for e in &overlays {
         commands.entity(e).despawn();
     }
-    *phase_mut = new_phase.clone();
-    pending_phase_mut.0 = None;
+    *phase = new_phase.clone();
+    pending_phase.0 = None;
 
     match new_phase {
         BattlePhase::AwaitDiscard { excess } => {
@@ -2235,7 +2242,10 @@ fn refresh_battle_ui(
     mut panels: Query<(&PlayerPanel, &mut BorderColor)>,
     reserved_rows: Query<(Entity, &ReservedRow)>,
     nobles_rows: Query<(Entity, &NoblesRow)>,
-    status: Single<&mut Text, With<StatusText>>,
+    // 注意：不再单独持有 `status: Single<&mut Text, With<StatusText>>`。
+    // ParamSet 内部多个 `&mut Text` 查询已声明对 `Text` 的可写访问，再加一个
+    // 独立的 `Single<&mut Text>` 会与 ParamSet 冲突 -> Bevy B0001。
+    // StatusText 由 apply_actions / play_events / overlay_input 等系统负责更新。
 ) {
     if !dirty.0 {
         return;
@@ -2282,9 +2292,6 @@ fn refresh_battle_ui(
         for (m, mut text) in &mut supplies {
             **text = format!("x{}", model.0.bank.tokens.get(m.0));
         }
-    }
-    {
-        let _ = status;
     }
     {
         if let Ok(mut hud) = texts.p6().single_mut() {
