@@ -3,13 +3,14 @@
 use crate::rules::card::{CardId, CardLevel};
 use crate::rules::color::PlayerId;
 use crate::rules::noble::NobleId;
+use crate::rules::player::ReserveOrigin;
 use crate::rules::token::TokenSet;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum GameEvent {
     TokensTaken { player: PlayerId, tokens: TokenSet },
     TokensReturned { player: PlayerId, tokens: TokenSet },
-    CardReserved { player: PlayerId, card: CardId, from_deck: bool, got_gold: bool },
+    CardReserved { player: PlayerId, card: CardId, origin: ReserveOrigin, got_gold: bool },
     CardPurchased { player: PlayerId, card: CardId, paid: TokenSet },
     MarketRefilled { level: CardLevel, card: Option<CardId> },
     NobleVisited { player: PlayerId, noble: NobleId },

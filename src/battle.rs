@@ -2321,8 +2321,8 @@ fn refresh_battle_ui(
                 TextFont { font_size: 8.0, ..default() },
                 TextColor(MUTED.with_alpha(0.7)),
             ));
-            for (i, &card_id) in p.reserved_cards.iter().enumerate() {
-                if let Some(card) = model.0.card_store.get(card_id) {
+            for (i, reserved) in p.reserved_cards.iter().copied().enumerate() {
+                if let Some(card) = model.0.card_store.get(reserved.card_id) {
                     let is_owner = row.0 == model.0.current_id();
                     spawn_reserved_card_mini(row_c, *card, row.0, i, is_owner);
                 }

@@ -5,7 +5,7 @@ use crate::rules::color::{CardColor, GemColor, PlayerId};
 use crate::rules::error::RuleError;
 use crate::rules::events::GameEvent;
 use crate::rules::noble::NobleId;
-use crate::rules::player::TOKEN_LIMIT;
+use crate::rules::player::{ReservedCard, ReserveOrigin, TOKEN_LIMIT};
 use crate::rules::scoring::{eligible_nobles, standings};
 use crate::rules::state::GameState;
 use crate::rules::token::TokenSet;
@@ -166,12 +166,12 @@ fn validate(action: &PlayerAction, state: &GameState, player: PlayerId) -> Resul
             can_afford(state.player(player).tokens, card, bonus)
         }
         PlayerAction::BuyReservedCard(reserved_idx) => {
-            let &card_id = state
+            let &reserved = state
                 .player(player)
                 .reserved_cards
                 .get(*reserved_idx)
                 .ok_or(RuleError::CardNotFound)?;
-            let card = state.card_store.get(card_id).ok_or(RuleError::CardNotFound)?;
+            let card = state.card_store.get(reserved.card_id).ok_or(RuleError::CardNotFound)?;
             let bonus = state.player(player).bonus(&state.card_store);
             can_afford(state.player(player).tokens, card, bonus)
         }
@@ -205,21 +205,23 @@ fn execute(
         }
         PlayerAction::ReserveVisibleCard { level, idx } => {
             let card = state.market.take(*level, *idx).ok_or(RuleError::CardNotFound)?;
-            state.player_mut(player).reserved_cards.push(card.id);
+            let reserved = ReservedCard::new(card.id, ReserveOrigin::Market);
+            state.player_mut(player).reserved_cards.push(reserved);
             let got_gold = reserve_gold(state, player);
             if let Some(new_id) = state.market.refill(*level, &mut state.decks) {
                 events.push(GameEvent::MarketRefilled { level: *level, card: Some(new_id) });
             } else {
                 events.push(GameEvent::MarketRefilled { level: *level, card: None });
             }
-            events.push(GameEvent::CardReserved { player, card: card.id, from_deck: false, got_gold });
+            events.push(GameEvent::CardReserved { player, card: card.id, origin: reserved.origin, got_gold });
             Ok(discard_or_finish_tokens(state, player, events))
         }
         PlayerAction::ReserveDeckCard(level) => {
             let card = state.decks.pop(*level).ok_or(RuleError::DeckEmpty)?;
-            state.player_mut(player).reserved_cards.push(card.id);
+            let reserved = ReservedCard::new(card.id, ReserveOrigin::BlindDeck(*level));
+            state.player_mut(player).reserved_cards.push(reserved);
             let got_gold = reserve_gold(state, player);
-            events.push(GameEvent::CardReserved { player, card: card.id, from_deck: true, got_gold });
+            events.push(GameEvent::CardReserved { player, card: card.id, origin: reserved.origin, got_gold });
             Ok(discard_or_finish_tokens(state, player, events))
         }
         PlayerAction::BuyVisibleCard { level, idx } => {
@@ -227,12 +229,12 @@ fn execute(
             buy_card(state, player, card, events, true, *level)
         }
         PlayerAction::BuyReservedCard(reserved_idx) => {
-            let card_id = *state
+            let reserved = *state
                 .player(player)
                 .reserved_cards
                 .get(*reserved_idx)
                 .ok_or(RuleError::CardNotFound)?;
-            let card = *state.card_store.get(card_id).ok_or(RuleError::CardNotFound)?;
+            let card = *state.card_store.get(reserved.card_id).ok_or(RuleError::CardNotFound)?;
             state.player_mut(player).reserved_cards.remove(*reserved_idx);
             buy_card(state, player, card, events, false, card.level)
         }
@@ -427,7 +429,7 @@ mod tests {
         assert_eq!(g.bank.tokens.gold, gold_before - 1);
         // 立即补牌：可见仍 4 张。
         assert_eq!(g.market.visible(CardLevel::Level1).len(), 4);
-        assert!(r.events.iter().any(|e| matches!(e, GameEvent::CardReserved { from_deck: false, got_gold: true, .. })));
+        assert!(r.events.iter().any(|e| matches!(e, GameEvent::CardReserved { origin: ReserveOrigin::Market, got_gold: true, .. })));
         assert!(r.events.iter().any(|e| matches!(e, GameEvent::MarketRefilled { .. })));
     }
 
@@ -438,7 +440,7 @@ mod tests {
         let r = apply_action(&mut g, 0, PlayerAction::ReserveDeckCard(CardLevel::Level1)).unwrap();
         assert_eq!(g.player(0).reserved_cards.len(), 1);
         assert_eq!(g.decks.remaining(CardLevel::Level1), before - 1);
-        assert!(r.events.iter().any(|e| matches!(e, GameEvent::CardReserved { from_deck: true, .. })));
+        assert!(r.events.iter().any(|e| matches!(e, GameEvent::CardReserved { origin: ReserveOrigin::BlindDeck(CardLevel::Level1), .. })));
     }
 
     #[test]
@@ -576,6 +578,26 @@ mod tests {
         let r2 = resume(&mut g, 0, Resume::ChooseNoble(50)).unwrap();
         assert!(matches!(r2.outcome, ActionOutcome::Complete));
         assert!(g.player(0).nobles.contains(&50));
+    }
+
+    #[test]
+    fn reserve_actions_emit_the_same_origin_stored_on_player() {
+        let mut game = game2();
+        let result = apply_action(
+            &mut game,
+            0,
+            PlayerAction::ReserveDeckCard(CardLevel::Level2),
+        )
+        .unwrap();
+        let reserved = game.player(0).reserved_cards[0];
+        assert_eq!(reserved.origin, ReserveOrigin::BlindDeck(CardLevel::Level2));
+        assert!(result.events.iter().any(|event| matches!(
+            event,
+            GameEvent::CardReserved {
+                origin: ReserveOrigin::BlindDeck(CardLevel::Level2),
+                ..
+            }
+        )));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! 玩家状态：筹码、保留牌、已购牌、贵族、折扣、分数。
 
-use crate::rules::card::{CardBonus, CardStore};
+use crate::rules::card::{CardBonus, CardId, CardLevel, CardStore};
 use crate::rules::color::{CardColor, GemColor, PlayerId};
 use crate::rules::noble::{NobleId, NobleStore};
 use crate::rules::token::TokenSet;
@@ -12,12 +12,38 @@ pub const TOKEN_LIMIT: u8 = 10;
 /// 触发终局的分数。
 pub const WIN_SCORE: u16 = 15;
 
+/// 保留牌来源：从市场保留（公共信息）或从指定等级牌堆盲抽（仅持有者可见）。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ReserveOrigin {
+    Market,
+    BlindDeck(CardLevel),
+}
+
+/// 一张保留牌：卡牌身份 + 来源。来源决定其可见性（市场保留对所有人公开，
+/// 盲抽只对持有者可见）。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ReservedCard {
+    pub card_id: CardId,
+    pub origin: ReserveOrigin,
+}
+
+impl ReservedCard {
+    pub const fn new(card_id: CardId, origin: ReserveOrigin) -> Self {
+        Self { card_id, origin }
+    }
+
+    /// 市场来源保留牌对所有人公开；盲抽只对持有者可见。
+    pub const fn is_public(self) -> bool {
+        matches!(self.origin, ReserveOrigin::Market)
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PlayerState {
     pub id: PlayerId,
     pub tokens: TokenSet,
-    pub reserved_cards: Vec<crate::rules::card::CardId>,
-    pub purchased_cards: Vec<crate::rules::card::CardId>,
+    pub reserved_cards: Vec<ReservedCard>,
+    pub purchased_cards: Vec<CardId>,
     pub nobles: Vec<NobleId>,
 }
 
@@ -117,7 +143,20 @@ mod tests {
     fn reserved_full_at_three() {
         let mut p = PlayerState::new(0);
         assert!(!p.reserved_full());
-        p.reserved_cards.extend([1, 2, 3]);
+        p.reserved_cards.extend([
+            ReservedCard::new(1, ReserveOrigin::Market),
+            ReservedCard::new(2, ReserveOrigin::Market),
+            ReservedCard::new(3, ReserveOrigin::Market),
+        ]);
         assert!(p.reserved_full());
+    }
+
+    #[test]
+    fn reservation_records_its_visibility_origin() {
+        let market = ReservedCard::new(7, ReserveOrigin::Market);
+        let blind = ReservedCard::new(8, ReserveOrigin::BlindDeck(CardLevel::Level2));
+        assert!(market.is_public());
+        assert!(!blind.is_public());
+        assert_eq!(blind.card_id, 8);
     }
 }
