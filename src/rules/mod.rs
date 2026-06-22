@@ -38,4 +38,4 @@ pub use player::{PlayerState, ReserveOrigin, ReservedCard}; // Task 7
 pub use scoring::{calculate_score, compare_players, eligible_nobles}; // Task 10
 pub use state::GameState; // Task 12
 pub use token::{Bank, TokenSet}; // Task 4
-pub use validation::can_afford; // AI 评估与 rollout 复用支付能力校验
+pub use validation::{can_afford, required_different_token_count};

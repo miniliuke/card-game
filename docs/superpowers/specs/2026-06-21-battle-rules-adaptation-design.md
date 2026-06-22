@@ -69,7 +69,7 @@ enum BattleAction {
 - `selected: Vec<GemColor>`（最多 3）。
 - **单点颜色按钮**：加入 `selected`（去重、≤3、银行≥1、非金）。
 - **颜色按钮 `×2` 徽章**（仅 `bank.get(color) >= 4` 时显示并启用）：清空 `selected` 并入队 `TakeTwoSameTokens(color)`，一次性确认。
-- **Confirm Take 3 按钮**：`selected.len() == 3` 时启用 → 入队 `TakeThreeDifferentTokens(selected.clone())` → 清缓冲。
+- **Confirm Take 按钮**：选择数达到 `min(3, 公共区可用普通颜色数)` 时启用 → 入队 `TakeThreeDifferentTokens(selected.clone())` → 清缓冲。
 - **Clear 按钮**：清缓冲。
 - 选中态：被选颜色按钮金边高亮 + 计数徽章 `1/3`。
 

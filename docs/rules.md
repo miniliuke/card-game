@@ -306,17 +306,18 @@ enum PlayerAction {
 
 ---
 
-# 11. 拿 3 个不同颜色宝石
+# 11. 拿不同颜色宝石
 
-玩家可以从公共筹码区拿 3 个不同颜色的普通宝石。
+玩家通常从公共筹码区拿 3 个不同颜色的普通宝石。如果公共区只剩 1 或 2 种普通颜色有筹码，则拿走所有仍可用的颜色，每种 1 个。
 
 条件：
 
 1. 只能拿普通颜色；
 2. 不能拿金色；
-3. 三个颜色必须不同；
+3. 所选颜色必须不同；
 4. 每种颜色公共区至少有 1 个；
-5. 拿完后，玩家筹码总数不能长期超过 10 个。
+5. 有至少 3 种颜色可选时必须拿 3 种；不足 3 种时必须选择所有可用颜色；
+6. 拿完后，玩家筹码总数不能长期超过 10 个。
 
 示例：
 
@@ -336,7 +337,8 @@ enum PlayerAction {
 
 ```rust
 fn can_take_three_different(bank: &Bank, colors: &[GemColor]) -> bool {
-    if colors.len() != 3 {
+    let required = available_normal_color_count(bank).min(3);
+    if required == 0 || colors.len() != required {
         return false;
     }
 

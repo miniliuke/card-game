@@ -11,6 +11,7 @@ use crate::rules::state::GameState;
 use crate::rules::token::TokenSet;
 use crate::rules::validation::{
     can_afford, can_reserve, can_take_three_different, can_take_two_same, plan_payment,
+    required_different_token_count,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -125,17 +126,28 @@ pub fn legal_actions(state: &GameState, player: PlayerId) -> Vec<PlayerAction> {
     }
 
     let mut candidates = Vec::new();
-    // 拿 3 个不同普通色：所有 5 选 3 组合。
-    for a in 0..GemColor::NORMAL.len() {
-        for b in (a + 1)..GemColor::NORMAL.len() {
-            for c in (b + 1)..GemColor::NORMAL.len() {
-                candidates.push(PlayerAction::TakeThreeDifferentTokens(vec![
-                    GemColor::NORMAL[a],
-                    GemColor::NORMAL[b],
-                    GemColor::NORMAL[c],
-                ]));
+    // Usually choose 3 available normal colors; take all colors when fewer remain.
+    let available: Vec<_> = GemColor::NORMAL
+        .iter()
+        .copied()
+        .filter(|color| state.bank.tokens.get(*color) > 0)
+        .collect();
+    match required_different_token_count(state.bank.tokens) {
+        1 | 2 => candidates.push(PlayerAction::TakeThreeDifferentTokens(available)),
+        3 => {
+            for a in 0..available.len() {
+                for b in (a + 1)..available.len() {
+                    for c in (b + 1)..available.len() {
+                        candidates.push(PlayerAction::TakeThreeDifferentTokens(vec![
+                            available[a],
+                            available[b],
+                            available[c],
+                        ]));
+                    }
+                }
             }
         }
+        _ => {}
     }
     // 拿 2 个同色：每个普通色。
     for color in GemColor::NORMAL {
@@ -557,6 +569,28 @@ mod tests {
     }
 
     #[test]
+    fn take_all_available_colors_when_only_two_remain() {
+        let mut g = game2();
+        g.bank.tokens = TokenSet {
+            white: 1,
+            blue: 1,
+            gold: g.bank.tokens.gold,
+            ..Default::default()
+        };
+
+        let r = apply_action(
+            &mut g,
+            0,
+            PlayerAction::TakeThreeDifferentTokens(vec![GemColor::White, GemColor::Blue]),
+        )
+        .unwrap();
+
+        assert!(matches!(r.outcome, ActionOutcome::Complete));
+        assert_eq!(g.player(0).token_count(GemColor::White), 1);
+        assert_eq!(g.player(0).token_count(GemColor::Blue), 1);
+    }
+
+    #[test]
     fn take_three_different_rejects_duplicate() {
         let mut g = game2();
         let r = apply_action(
@@ -939,6 +973,24 @@ mod tests {
             assert!(validate_action(&game, 0, action).is_ok(), "{action:?}");
             assert!(!actions[..index].contains(action), "duplicate {action:?}");
         }
+    }
+
+    #[test]
+    fn legal_actions_include_all_available_colors_when_only_two_remain() {
+        let mut game = game2();
+        game.bank.tokens = TokenSet {
+            white: 1,
+            blue: 1,
+            gold: game.bank.tokens.gold,
+            ..Default::default()
+        };
+
+        assert!(
+            legal_actions(&game, 0).contains(&PlayerAction::TakeThreeDifferentTokens(vec![
+                GemColor::White,
+                GemColor::Blue,
+            ]))
+        );
     }
 
     #[test]

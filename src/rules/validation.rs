@@ -6,15 +6,22 @@ use crate::rules::error::RuleError;
 use crate::rules::player::RESERVED_LIMIT;
 use crate::rules::token::TokenSet;
 
+/// Number of differently colored tokens that must be taken from the current bank.
+/// When fewer than three normal colors remain, all available colors are taken.
+pub fn required_different_token_count(bank: TokenSet) -> usize {
+    GemColor::NORMAL
+        .iter()
+        .filter(|color| bank.get(**color) > 0)
+        .count()
+        .min(3)
+}
+
 /// 拿 3 个不同普通色宝石的合法性（rules.md §11）。
 pub fn can_take_three_different(
     player_tokens: TokenSet,
     bank: TokenSet,
     colors: &[GemColor],
 ) -> Result<(), RuleError> {
-    if colors.len() != 3 {
-        return Err(RuleError::InvalidTokenSelection);
-    }
     if colors.iter().any(|c| c.is_gold()) {
         return Err(RuleError::InvalidTokenSelection);
     }
@@ -25,6 +32,10 @@ pub fn can_take_three_different(
         if bank.get(*c) < 1 {
             return Err(RuleError::BankInsufficient);
         }
+    }
+    let required = required_different_token_count(bank);
+    if required == 0 || colors.len() != required {
+        return Err(RuleError::InvalidTokenSelection);
     }
     // 注意：拿后是否超 10 由 execute 阶段判定（NeedDiscardTokens），此处不阻断。
     let _ = player_tokens;
@@ -169,6 +180,43 @@ mod tests {
             &[GemColor::White, GemColor::Blue, GemColor::Green],
         );
         assert_eq!(r, Err(RuleError::BankInsufficient));
+    }
+
+    #[test]
+    fn different_tokens_accepts_all_colors_when_only_two_are_available() {
+        let bank = TokenSet {
+            white: 1,
+            blue: 1,
+            ..Default::default()
+        };
+
+        assert!(
+            can_take_three_different(
+                TokenSet::default(),
+                bank,
+                &[GemColor::White, GemColor::Blue],
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn different_tokens_still_requires_three_when_three_colors_are_available() {
+        let bank = TokenSet {
+            white: 1,
+            blue: 1,
+            green: 1,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            can_take_three_different(
+                TokenSet::default(),
+                bank,
+                &[GemColor::White, GemColor::Blue],
+            ),
+            Err(RuleError::InvalidTokenSelection)
+        );
     }
 
     #[test]

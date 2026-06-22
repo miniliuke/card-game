@@ -206,6 +206,7 @@ struct CardSlot {
 struct CardButton {
     level: CardLevel,
     slot: usize,
+    card: CardId,
 }
 
 #[derive(Component)]
@@ -368,10 +369,16 @@ impl Default for UiDirty {
     }
 }
 
-/// 拿筹码选择缓冲区（TakeThreeDifferentTokens）。选满 3 后 Confirm 提交。
+/// Buffer for differently colored tokens. The bank determines the required count.
 #[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
 struct TokenPicker {
     selected: Vec<GemColor>,
+}
+
+fn selected_tokens_action(picker: &TokenPicker, bank: TokenSet) -> Option<PlayerAction> {
+    let required = required_different_token_count(bank);
+    (required > 0 && picker.selected.len() == required)
+        .then(|| PlayerAction::TakeThreeDifferentTokens(picker.selected.clone()))
 }
 
 /// 弃牌覆盖层：玩家选择归还的筹码。total 必须等于 excess。
@@ -942,7 +949,7 @@ fn spawn_market_row(parent: &mut ChildSpawnerCommands, level: CardLevel, model: 
                 row.spawn((card_slot_node(), CardSlot { level, slot }))
                     .with_children(|slot_parent| {
                         if let Some(card) = model.0.market.visible(level).get(slot) {
-                            spawn_card_button(slot_parent, *card, level, slot);
+                            spawn_card_button(slot_parent, *card, level, slot, false);
                         }
                     });
             }
@@ -964,145 +971,154 @@ fn spawn_card_button(
     card: DevelopmentCard,
     level: CardLevel,
     slot: usize,
+    animate_deal: bool,
 ) {
-    parent
-        .spawn((
-            Button,
-            Node {
-                width: percent(100),
-                height: percent(100),
-                min_height: px(126),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Stretch,
-                justify_content: JustifyContent::SpaceBetween,
-                padding: UiRect::all(px(9)),
-                border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(9)),
-                overflow: Overflow::clip(),
-                ..default()
-            },
-            BackgroundGradient::from(LinearGradient {
-                angle: 2.3,
-                stops: vec![
-                    ColorStop::new(gem_color(card.color.to_gem()).with_alpha(0.26), percent(0)),
-                    ColorStop::new(PANEL, percent(58)),
-                    ColorStop::new(Color::srgb(0.035, 0.039, 0.055), percent(100)),
-                ],
-                ..default()
-            }),
-            BorderColor::all(gem_color(card.color.to_gem()).with_alpha(0.68)),
-            UiTransform::default(),
-            BoxShadow(vec![ShadowStyle {
-                color: Color::srgba(0.0, 0.0, 0.0, 0.28),
-                x_offset: px(0),
-                y_offset: px(7),
-                spread_radius: px(0),
-                blur_radius: px(13),
-            }]),
-            CardButton { level, slot },
-            BattleAction::BuyVisibleCard { level, idx: slot },
-            Focusable {
-                zone: FocusZone::Market { level, slot },
-                normal_border: gem_color(card.color.to_gem()).with_alpha(0.68),
-            },
-        ))
-        .with_children(|face| {
-            face.spawn(Node {
-                width: percent(100),
-                justify_content: JustifyContent::SpaceBetween,
-                ..default()
-            })
-            .with_children(|top| {
-                top.spawn((
-                    Text::new(format!("T{}", level.index() + 1)),
-                    TextFont {
-                        font_size: 9.0,
-                        ..default()
-                    },
-                    TextColor(GOLD),
-                ));
-                top.spawn((
-                    Text::new(format!("{} PTS", card.prestige)),
-                    TextFont {
-                        font_size: 9.0,
-                        ..default()
-                    },
-                    TextColor(CREAM),
-                ));
-            });
-            face.spawn(Node {
-                width: percent(100),
-                justify_content: JustifyContent::Center,
-                column_gap: px(3),
-                ..default()
-            })
-            .with_children(|costs| {
-                for color in CardColor::ALL {
-                    let amount = card.cost.get(color);
-                    costs
-                        .spawn((
-                            Node {
-                                width: px(18),
-                                height: px(18),
-                                align_items: AlignItems::Center,
-                                justify_content: JustifyContent::Center,
-                                border_radius: BorderRadius::MAX,
-                                border: UiRect::all(px(1)),
-                                ..default()
-                            },
-                            BackgroundColor(gem_color(color.to_gem()).with_alpha(if amount == 0 {
-                                0.18
-                            } else {
-                                0.72
-                            })),
-                            BorderColor::all(gem_color(color.to_gem()).with_alpha(0.85)),
-                        ))
-                        .with_children(|dot| {
-                            dot.spawn((
-                                Text::new(amount.to_string()),
-                                TextFont {
-                                    font_size: 8.0,
-                                    ..default()
-                                },
-                                TextColor(if matches!(color, CardColor::White) {
-                                    INK
-                                } else {
-                                    CREAM
-                                }),
-                            ));
-                        });
-                }
-            });
-            // R 保留按钮（叠加底部）
-            face.spawn((
-                Button,
-                Node {
-                    position_type: PositionType::Absolute,
-                    right: px(4),
-                    bottom: px(4),
-                    width: px(20),
-                    height: px(18),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    border: UiRect::all(px(1)),
-                    border_radius: BorderRadius::all(px(4)),
+    let mut card_entity = parent.spawn((
+        Button,
+        Node {
+            width: percent(100),
+            height: percent(100),
+            min_height: px(126),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Stretch,
+            justify_content: JustifyContent::SpaceBetween,
+            padding: UiRect::all(px(9)),
+            border: UiRect::all(px(1)),
+            border_radius: BorderRadius::all(px(9)),
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        BackgroundGradient::from(LinearGradient {
+            angle: 2.3,
+            stops: vec![
+                ColorStop::new(gem_color(card.color.to_gem()).with_alpha(0.26), percent(0)),
+                ColorStop::new(PANEL, percent(58)),
+                ColorStop::new(Color::srgb(0.035, 0.039, 0.055), percent(100)),
+            ],
+            ..default()
+        }),
+        BorderColor::all(gem_color(card.color.to_gem()).with_alpha(0.68)),
+        UiTransform::default(),
+        BoxShadow(vec![ShadowStyle {
+            color: Color::srgba(0.0, 0.0, 0.0, 0.28),
+            x_offset: px(0),
+            y_offset: px(7),
+            spread_radius: px(0),
+            blur_radius: px(13),
+        }]),
+        CardButton {
+            level,
+            slot,
+            card: card.id,
+        },
+        BattleAction::BuyVisibleCard { level, idx: slot },
+        Focusable {
+            zone: FocusZone::Market { level, slot },
+            normal_border: gem_color(card.color.to_gem()).with_alpha(0.68),
+        },
+    ));
+    if animate_deal {
+        card_entity.insert(DealAnimation {
+            timer: Timer::from_seconds(0.34, TimerMode::Once),
+        });
+    }
+    card_entity.with_children(|face| {
+        face.spawn(Node {
+            width: percent(100),
+            justify_content: JustifyContent::SpaceBetween,
+            ..default()
+        })
+        .with_children(|top| {
+            top.spawn((
+                Text::new(format!("T{}", level.index() + 1)),
+                TextFont {
+                    font_size: 9.0,
                     ..default()
                 },
-                BackgroundColor(GOLD.with_alpha(0.2)),
-                BorderColor::all(GOLD.with_alpha(0.6)),
-                ReserveMarketButton { level, slot },
-            ))
-            .with_children(|r| {
-                r.spawn((
-                    Text::new("R"),
-                    TextFont {
-                        font_size: 9.0,
-                        ..default()
-                    },
-                    TextColor(GOLD_BRIGHT),
-                ));
-            });
+                TextColor(GOLD),
+            ));
+            top.spawn((
+                Text::new(format!("{} PTS", card.prestige)),
+                TextFont {
+                    font_size: 9.0,
+                    ..default()
+                },
+                TextColor(CREAM),
+            ));
         });
+        face.spawn(Node {
+            width: percent(100),
+            justify_content: JustifyContent::Center,
+            column_gap: px(3),
+            ..default()
+        })
+        .with_children(|costs| {
+            for color in CardColor::ALL {
+                let amount = card.cost.get(color);
+                costs
+                    .spawn((
+                        Node {
+                            width: px(18),
+                            height: px(18),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            border_radius: BorderRadius::MAX,
+                            border: UiRect::all(px(1)),
+                            ..default()
+                        },
+                        BackgroundColor(gem_color(color.to_gem()).with_alpha(if amount == 0 {
+                            0.18
+                        } else {
+                            0.72
+                        })),
+                        BorderColor::all(gem_color(color.to_gem()).with_alpha(0.85)),
+                    ))
+                    .with_children(|dot| {
+                        dot.spawn((
+                            Text::new(amount.to_string()),
+                            TextFont {
+                                font_size: 8.0,
+                                ..default()
+                            },
+                            TextColor(if matches!(color, CardColor::White) {
+                                INK
+                            } else {
+                                CREAM
+                            }),
+                        ));
+                    });
+            }
+        });
+        // R 保留按钮（叠加底部）
+        face.spawn((
+            Button,
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(4),
+                bottom: px(4),
+                width: px(20),
+                height: px(18),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(4)),
+                ..default()
+            },
+            BackgroundColor(GOLD.with_alpha(0.2)),
+            BorderColor::all(GOLD.with_alpha(0.6)),
+            ReserveMarketButton { level, slot },
+        ))
+        .with_children(|r| {
+            r.spawn((
+                Text::new("R"),
+                TextFont {
+                    font_size: 9.0,
+                    ..default()
+                },
+                TextColor(GOLD_BRIGHT),
+            ));
+        });
+    });
 }
 
 fn spawn_token_supply(parent: &mut ChildSpawnerCommands, model: &BattleModel) {
@@ -1252,6 +1268,10 @@ fn spawn_supply_button(parent: &mut ChildSpawnerCommands, color: GemColor, model
                         BackgroundColor(GOLD.with_alpha(0.85)),
                         BorderColor::all(GOLD_BRIGHT),
                         SupplyX2Button(color),
+                        Focusable {
+                            zone: FocusZone::SupplyX2 { color },
+                            normal_border: GOLD_BRIGHT,
+                        },
                     ))
                     .with_children(|x2| {
                         x2.spawn((
@@ -1307,7 +1327,7 @@ fn spawn_selection_hud(market: &mut ChildSpawnerCommands) {
             ))
             .with_children(|b| {
                 b.spawn((
-                    Text::new("TAKE 3"),
+                    Text::new("TAKE"),
                     TextFont {
                         font_size: 10.0,
                         ..default()
@@ -1487,7 +1507,7 @@ fn spawn_footer(root: &mut ChildSpawnerCommands) {
     })
     .with_children(|footer| {
         footer.spawn((
-            Text::new("CLICK BUY / R RESERVE / CLICK TOKEN x2 / TAKE 3 / ESC MENU"),
+            Text::new("CLICK BUY / R RESERVE / CLICK TOKEN x2 / TAKE TOKENS / ESC MENU"),
             TextFont {
                 font_size: 9.0,
                 ..default()
@@ -1528,7 +1548,7 @@ fn mouse_actions(
     for (interaction, btn) in &supply {
         if matches!(*interaction, Interaction::Pressed) {
             let c = btn.0;
-            if picker.selected.len() < 3
+            if picker.selected.len() < required_different_token_count(model.0.bank.tokens)
                 && !picker.selected.contains(&c)
                 && model.0.bank.tokens.get(c) >= 1
             {
@@ -1538,21 +1558,20 @@ fn mouse_actions(
     }
     // x2 click -> direct enqueue
     for (interaction, btn) in &supply_x2 {
-        if matches!(*interaction, Interaction::Pressed) {
+        if matches!(*interaction, Interaction::Pressed) && model.0.bank.tokens.get(btn.0) >= 4 {
             queue.0.push(QueuedRuleDecision::Action(
                 BattleAction::TakeTwoSameTokens(btn.0).to_player_action(),
             ));
             picker.selected.clear();
         }
     }
-    // Confirm take 3
+    // Confirm the required number of differently colored tokens.
     if let Ok(interaction) = confirm.single() {
-        if matches!(*interaction, Interaction::Pressed) && picker.selected.len() == 3 {
-            let triple = Triple([picker.selected[0], picker.selected[1], picker.selected[2]]);
-            queue.0.push(QueuedRuleDecision::Action(
-                BattleAction::TakeThreeDifferentTokens(triple).to_player_action(),
-            ));
-            picker.selected.clear();
+        if matches!(*interaction, Interaction::Pressed) {
+            if let Some(action) = selected_tokens_action(&picker, model.0.bank.tokens) {
+                queue.0.push(QueuedRuleDecision::Action(action));
+                picker.selected.clear();
+            }
         }
     }
     // Clear
@@ -1732,28 +1751,19 @@ fn play_events(
             }
         }
         GameEvent::MarketRefilled { level, card } => {
-            // 注：此处用"最末槽"近似定位补牌槽位——markets refill 是 push 到 visible 尾部，
-            // 故 visible 最后一张即新补卡。动画可能落在非实际空槽（视觉瑕疵），但数据正确
-            // （下一帧 refresh 不会重建市场槽，故仅发牌动画的落点可能不准；可接受）。
-            if card.is_some() {
-                if let Some(card_obj) = model.0.market.visible(*level).last() {
-                    if let Some((slot_entity, _)) = card_slots.iter().find(|(_, s)| {
-                        s.level == *level && model.0.market.visible(*level).len() == s.slot + 1
-                    }) {
-                        commands.entity(slot_entity).with_children(|p| {
-                            p.spawn((
-                                Node {
-                                    width: percent(100),
-                                    height: percent(100),
-                                    ..default()
-                                },
-                                UiTransform::default(),
-                                DealAnimation {
-                                    timer: Timer::from_seconds(0.34, TimerMode::Once),
-                                },
-                            ));
-                            spawn_card_button_inner(p, *card_obj, *level);
-                        });
+            let visible = model.0.market.visible(*level);
+            let replacement_slot = card.is_some().then(|| visible.len().saturating_sub(1));
+
+            // Market::take 会压紧 Vec，refill 再把新牌追加到末尾。因此拿走任意位置后，
+            // 该行所有后续槽位都可能改变；整行按规则状态重建，避免旧牌残留或索引错位。
+            for (slot_entity, slot) in card_slots.iter().filter(|(_, slot)| slot.level == *level) {
+                commands.entity(slot_entity).despawn_children();
+                if let Some(card_obj) = visible.get(slot.slot) {
+                    let animate_deal = replacement_slot == Some(slot.slot);
+                    commands.entity(slot_entity).with_children(|parent| {
+                        spawn_card_button(parent, *card_obj, *level, slot.slot, animate_deal);
+                    });
+                    if animate_deal {
                         anim.dealing += 1;
                     }
                 }
@@ -1778,47 +1788,7 @@ fn play_events(
     dirty.0 = true;
 }
 
-/// 卡面 spawn（无 Buy/Reserve 按钮，纯视觉，用于发牌动画）。
-fn spawn_card_button_inner(
-    parent: &mut ChildSpawnerCommands,
-    card: DevelopmentCard,
-    level: CardLevel,
-) {
-    parent
-        .spawn((
-            Node {
-                width: percent(100),
-                height: percent(100),
-                flex_direction: FlexDirection::Column,
-                padding: UiRect::all(px(9)),
-                border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(9)),
-                overflow: Overflow::clip(),
-                ..default()
-            },
-            BackgroundGradient::from(LinearGradient {
-                angle: 2.3,
-                stops: vec![
-                    ColorStop::new(gem_color(card.color.to_gem()).with_alpha(0.26), percent(0)),
-                    ColorStop::new(PANEL, percent(58)),
-                    ColorStop::new(Color::srgb(0.035, 0.039, 0.055), percent(100)),
-                ],
-                ..default()
-            }),
-            BorderColor::all(gem_color(card.color.to_gem()).with_alpha(0.68)),
-        ))
-        .with_children(|face| {
-            face.spawn((
-                Text::new(format!("T{} {}P", level.index() + 1, card.prestige)),
-                TextFont {
-                    font_size: 9.0,
-                    ..default()
-                },
-                TextColor(GOLD),
-            ));
-        });
-}
-
+/// 生成从银行飞向玩家的筹码动画。
 fn spawn_fly_coin(
     commands: &mut Commands,
     root: Entity,
@@ -2388,7 +2358,7 @@ fn keyboard_actions(
                 ));
             }
             FocusZone::Supply { color } => {
-                if picker.selected.len() < 3
+                if picker.selected.len() < required_different_token_count(model.0.bank.tokens)
                     && !picker.selected.contains(&color)
                     && model.0.bank.tokens.get(color) >= 1
                 {
@@ -2396,17 +2366,16 @@ fn keyboard_actions(
                 }
             }
             FocusZone::SupplyX2 { color } => {
-                queue.0.push(QueuedRuleDecision::Action(
-                    BattleAction::TakeTwoSameTokens(color).to_player_action(),
-                ));
-                picker.selected.clear();
+                if model.0.bank.tokens.get(color) >= 4 {
+                    queue.0.push(QueuedRuleDecision::Action(
+                        BattleAction::TakeTwoSameTokens(color).to_player_action(),
+                    ));
+                    picker.selected.clear();
+                }
             }
             FocusZone::ConfirmTake3 => {
-                if picker.selected.len() == 3 {
-                    let t = Triple([picker.selected[0], picker.selected[1], picker.selected[2]]);
-                    queue.0.push(QueuedRuleDecision::Action(
-                        BattleAction::TakeThreeDifferentTokens(t).to_player_action(),
-                    ));
+                if let Some(action) = selected_tokens_action(&picker, model.0.bank.tokens) {
+                    queue.0.push(QueuedRuleDecision::Action(action));
                     picker.selected.clear();
                 }
             }
@@ -2607,7 +2576,7 @@ fn refresh_battle_ui(
     {
         if let Ok(mut hud) = texts.p6().single_mut() {
             // selection HUD count — picker not queried here；由 refresh_selection_hud 独立刷新。
-            **hud = "0/3".to_string();
+            **hud = format!("0/{}", required_different_token_count(model.0.bank.tokens));
         }
     }
     {
@@ -2784,9 +2753,12 @@ fn refresh_selection_hud(
     model: Res<BattleModel>,
     mut hud: Single<&mut Text, With<SelectionHudText>>,
 ) {
-    ***hud = format!("{}/3", picker.selected.len());
+    ***hud = format!(
+        "{}/{}",
+        picker.selected.len(),
+        required_different_token_count(model.0.bank.tokens)
+    );
     // 高亮已选 supply 按钮（边框）由 update_focus_visuals 统一处理颜色，此处只更新计数。
-    let _ = model;
 }
 
 fn button_hover_effects(
@@ -2869,6 +2841,71 @@ mod tests {
     use super::*;
 
     #[test]
+    fn market_refill_replaces_visible_cards_without_stacking_or_shifting_slots() {
+        let level = CardLevel::Level1;
+        let mut state = GameState::new_seeded(2, 7).unwrap();
+        let initial_cards = state.market.visible(level).to_vec();
+
+        state.market.take(level, 1).unwrap();
+        let replacement = state.market.refill(level, &mut state.decks).unwrap();
+        let expected_cards: Vec<_> = state
+            .market
+            .visible(level)
+            .iter()
+            .map(|card| card.id)
+            .collect();
+
+        let mut app = App::new();
+        app.insert_resource(BattleModel(state));
+        app.insert_resource(PendingEvents(vec![GameEvent::MarketRefilled {
+            level,
+            card: Some(replacement),
+        }]));
+        app.init_resource::<AnimationCounts>();
+        app.init_resource::<UiDirty>();
+        app.add_systems(Startup, move |mut commands: Commands| {
+            commands.spawn((BattleRoot, Node::default()));
+            commands.spawn((StatusText, Text::new("")));
+            for (slot, card) in initial_cards.iter().copied().enumerate() {
+                commands
+                    .spawn((CardSlot { level, slot }, Node::default()))
+                    .with_children(|parent| spawn_card_button(parent, card, level, slot, false));
+            }
+        });
+        app.add_systems(Update, play_events);
+        app.update();
+
+        let first_frame_counts = {
+            let world = app.world_mut();
+            let mut slots = world.query_filtered::<&Children, With<CardSlot>>();
+            slots.iter(world).map(Children::len).collect::<Vec<_>>()
+        };
+        assert!(app.world().resource::<PendingEvents>().0.is_empty());
+        app.update();
+
+        let world = app.world_mut();
+        let mut slots = world.query_filtered::<&Children, With<CardSlot>>();
+        let child_counts: Vec<_> = slots.iter(world).map(Children::len).collect();
+        assert_eq!(child_counts, first_frame_counts);
+        assert_eq!(child_counts.len(), VISIBLE_PER_LEVEL);
+        assert!(
+            child_counts.iter().all(|count| *count == 1),
+            "each market slot must contain exactly one visible card; got {child_counts:?}"
+        );
+
+        let mut displayed_cards: Vec<_> = world
+            .query::<&CardButton>()
+            .iter(world)
+            .map(|button| (button.slot, button.card))
+            .collect();
+        displayed_cards.sort_unstable_by_key(|(slot, _)| *slot);
+        assert_eq!(
+            displayed_cards,
+            expected_cards.into_iter().enumerate().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn gem_color_handles_all_six() {
         for c in [
             GemColor::White,
@@ -2885,6 +2922,41 @@ mod tests {
     #[test]
     fn color_name_covers_gold() {
         assert_eq!(color_name(GemColor::Gold), "GOLD");
+    }
+
+    #[test]
+    fn token_picker_confirms_two_colors_when_only_two_are_available() {
+        let picker = TokenPicker {
+            selected: vec![GemColor::White, GemColor::Blue],
+        };
+        let bank = TokenSet {
+            white: 1,
+            blue: 1,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            selected_tokens_action(&picker, bank),
+            Some(PlayerAction::TakeThreeDifferentTokens(vec![
+                GemColor::White,
+                GemColor::Blue,
+            ]))
+        );
+    }
+
+    #[test]
+    fn token_picker_does_not_confirm_two_colors_when_three_are_available() {
+        let picker = TokenPicker {
+            selected: vec![GemColor::White, GemColor::Blue],
+        };
+        let bank = TokenSet {
+            white: 1,
+            blue: 1,
+            green: 1,
+            ..Default::default()
+        };
+
+        assert_eq!(selected_tokens_action(&picker, bank), None);
     }
 
     #[test]

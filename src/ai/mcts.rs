@@ -227,6 +227,9 @@ fn tree_iteration<R: rand::Rng + ?Sized>(
     let stop = || control.is_cancelled() || deadline.is_some_and(|limit| Instant::now() >= limit);
 
     loop {
+        if stop() {
+            return Err(AiError::Cancelled);
+        }
         if simulation.game.is_over() {
             // 终局：直接用终局评估作为回传奖励（0/1）。
             let reward = super::evaluation::evaluate(&simulation.game, root);
@@ -250,6 +253,12 @@ fn tree_iteration<R: rand::Rng + ?Sized>(
 
         let key = AiObservation::from_game(&simulation.game, actor)
             .information_set_key(&simulation.context);
+        // Token take/discard sequences can return to the same information set.
+        if path.iter().any(|(visited, _)| *visited == key) {
+            let reward = super::evaluation::evaluate(&simulation.game, root);
+            backpropagate(tree, path, root, reward);
+            return Ok(());
+        }
         let legal = simulation.legal_decisions()?;
         if legal.is_empty() {
             // 非终局但无合法决策（极端牌堆耗尽 + 保留满）：以当前评估值结算本迭代，
@@ -492,6 +501,40 @@ mod tests {
     }
 
     #[test]
+    fn scarce_bank_search_respects_short_time_limit() {
+        let mut game = GameState::new_seeded(2, 91).unwrap();
+        game.bank.tokens = crate::rules::TokenSet {
+            white: 1,
+            blue: 1,
+            gold: game.bank.tokens.gold,
+            ..Default::default()
+        };
+        let observation = AiObservation::from_game(&game, 0);
+        let config = MctsConfig {
+            time_limit: Duration::from_millis(20),
+            iteration_limit: None,
+            ..MctsConfig::normal()
+        };
+        let started = Instant::now();
+
+        search(
+            observation,
+            DecisionContext::MainTurn,
+            0,
+            99,
+            config,
+            SearchControl::new(),
+        )
+        .unwrap();
+
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "short-budget search took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
     fn pre_cancelled_returns_cancelled_error() {
         let game = GameState::new_seeded(2, 101).unwrap();
         let observation = AiObservation::from_game(&game, 0);
@@ -506,6 +549,62 @@ mod tests {
             control,
         );
         assert_eq!(result.unwrap_err(), AiError::Cancelled);
+    }
+
+    #[test]
+    fn tree_iteration_stops_before_descent_when_cancelled() {
+        let game = GameState::new_seeded(2, 107).unwrap();
+        let mut simulation = SimulationState::new(game, DecisionContext::MainTurn);
+        let mut knowledge = PrivateKnowledge::from_state(&simulation.game);
+        let control = SearchControl::new();
+        control.cancel();
+        let mut tree = HashMap::new();
+        let mut path = Vec::new();
+        let mut rng = StdRng::seed_from_u64(109);
+
+        let result = tree_iteration(
+            &mut tree,
+            &mut simulation,
+            &mut knowledge,
+            0,
+            &MctsConfig::normal(),
+            &control,
+            None,
+            &mut rng,
+            &mut path,
+        );
+
+        assert_eq!(result, Err(AiError::Cancelled));
+        assert!(tree.is_empty(), "cancelled descent mutated the tree");
+        assert!(path.is_empty(), "cancelled descent selected an edge");
+    }
+
+    #[test]
+    fn tree_iteration_stops_when_information_set_repeats_on_path() {
+        let game = GameState::new_seeded(2, 113).unwrap();
+        let mut simulation = SimulationState::new(game, DecisionContext::MainTurn);
+        let mut knowledge = PrivateKnowledge::from_state(&simulation.game);
+        let key =
+            AiObservation::from_game(&simulation.game, 0).information_set_key(&simulation.context);
+        let decision = fallback_decision(&simulation).unwrap();
+        let mut path = vec![(key, decision)];
+        let mut tree = HashMap::new();
+        let mut rng = StdRng::seed_from_u64(127);
+
+        tree_iteration(
+            &mut tree,
+            &mut simulation,
+            &mut knowledge,
+            0,
+            &MctsConfig::for_iterations(1),
+            &SearchControl::new(),
+            None,
+            &mut rng,
+            &mut path,
+        )
+        .unwrap();
+
+        assert_eq!(path.len(), 1, "cycle descent selected another edge");
     }
 
     #[test]

@@ -250,7 +250,7 @@ resume(resume):
 
 ### 5.4 关键执行规则 (落点到 validation/execute)
 
-- **拿3不同**：3 个互异普通色，每色公共区 ≥1；拿后若 `token_total > 10` → `NeedDiscardTokens{excess}`。
+- **拿不同色**：通常拿 3 个互异普通色；公共区不足 3 种普通色时拿所有可用颜色；拿后若 `token_total > 10` → `NeedDiscardTokens{excess}`。
 - **拿2相同**：普通色且公共区 ≥4。
 - **保留可见卡**：`reserved.len() < 3`；移卡 → 补牌 (立即)；公共区有金则拿 1 金；可能触发弃牌。
 - **盲抽保留**：`reserved.len() < 3`；`deck.pop()`；有金则拿 1 金。
