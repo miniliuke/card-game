@@ -29,7 +29,7 @@ pub struct BattlePlugin;
 impl Plugin for BattlePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AnimationCounts>()
-            .init_resource::<ActionQueue>()
+            .init_resource::<RuleDecisionQueue>()
             .init_resource::<FocusCursor>()
             .init_resource::<UiDirty>()
             .init_resource::<PendingEvents>()
@@ -48,7 +48,7 @@ impl Plugin for BattlePlugin {
                     discard_overlay_input,
                     noble_overlay_input,
                     gameover_overlay_input,
-                    apply_actions,
+                    apply_rule_decisions,
                     play_events,
                     commit_pending_phase,
                     animate_flights,
@@ -303,8 +303,16 @@ struct PendingPhase(Option<BattlePhase>);
 #[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
 struct PendingNobleCandidates(Option<Vec<NobleId>>);
 
+/// 统一规则决策队列项：人类/AI 的主行动或 resume 续接均经此入队，
+/// 由 `apply_rule_decisions` 单一系统调用规则层落地。
+#[derive(Clone, Debug)]
+enum QueuedRuleDecision {
+    Action(PlayerAction),
+    Resume(Resume),
+}
+
 #[derive(Resource, Default)]
-struct ActionQueue(Vec<BattleAction>);
+struct RuleDecisionQueue(Vec<QueuedRuleDecision>);
 
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 struct FocusCursor {
@@ -371,7 +379,7 @@ fn can_act(phase: &BattlePhase, busy: bool, pending: &PendingEvents) -> bool {
 /// 把 ActionOutcome 映射为待提交的 BattlePhase（None = 保持 Idle）。
 /// 注意 NeedFinalDiscardThenChooseNoble 只映射到 discard 阶段；
 /// candidates 由调用方存入 PendingNobleCandidates。
-fn outcome_to_pending(outcome: ActionOutcome) -> Option<BattlePhase> {
+fn route_outcome(outcome: ActionOutcome) -> Option<BattlePhase> {
     match outcome {
         ActionOutcome::Complete => None,
         ActionOutcome::NeedDiscardTokens { excess } => {
@@ -384,6 +392,11 @@ fn outcome_to_pending(outcome: ActionOutcome) -> Option<BattlePhase> {
             Some(BattlePhase::AwaitDiscard { excess })
         }
     }
+}
+
+/// 向后兼容别名（旧测试引用）。等价于 `route_outcome`。
+fn outcome_to_pending(outcome: ActionOutcome) -> Option<BattlePhase> {
+    route_outcome(outcome)
 }
 
 /// 若 events 含 GameOver，返回对应 BattlePhase。
@@ -419,7 +432,7 @@ fn setup_battle(mut commands: Commands) {
     commands.init_resource::<DiscardBuffer>();
     commands.init_resource::<TurnCount>();
     commands.insert_resource(FocusCursor::default());
-    commands.insert_resource(ActionQueue::default());
+    commands.insert_resource(RuleDecisionQueue::default());
     commands.insert_resource(AnimationCounts::default());
     commands.insert_resource(UiDirty(true));
 
@@ -1300,7 +1313,7 @@ fn mouse_actions(
     confirm: Query<&Interaction, (Changed<Interaction>, With<ConfirmTake3Button>)>,
     clear: Query<&Interaction, (Changed<Interaction>, With<ClearSelectionButton>)>,
     mut picker: ResMut<TokenPicker>,
-    mut queue: ResMut<ActionQueue>,
+    mut queue: ResMut<RuleDecisionQueue>,
     model: Res<BattleModel>,
 ) {
     // Supply single click -> buffer
@@ -1318,7 +1331,9 @@ fn mouse_actions(
     // x2 click -> direct enqueue
     for (interaction, btn) in &supply_x2 {
         if matches!(*interaction, Interaction::Pressed) {
-            queue.0.push(BattleAction::TakeTwoSameTokens(btn.0));
+            queue
+                .0
+                .push(QueuedRuleDecision::Action(BattleAction::TakeTwoSameTokens(btn.0).to_player_action()));
             picker.selected.clear();
         }
     }
@@ -1330,7 +1345,9 @@ fn mouse_actions(
                 picker.selected[1],
                 picker.selected[2],
             ]);
-            queue.0.push(BattleAction::TakeThreeDifferentTokens(triple));
+            queue
+                .0
+                .push(QueuedRuleDecision::Action(BattleAction::TakeThreeDifferentTokens(triple).to_player_action()));
             picker.selected.clear();
         }
     }
@@ -1344,15 +1361,17 @@ fn mouse_actions(
     for (interaction, _border, action, _entity) in &mut interactions {
         if matches!(*interaction, Interaction::Pressed) {
             if let Some(a) = action {
-                queue.0.push(*a);
+                queue
+                    .0
+                    .push(QueuedRuleDecision::Action(a.to_player_action()));
             }
         }
     }
 }
 
-fn apply_actions(
+fn apply_rule_decisions(
     mut commands: Commands,
-    mut queue: ResMut<ActionQueue>,
+    mut queue: ResMut<RuleDecisionQueue>,
     mut model: ResMut<BattleModel>,
     mut pending_events: ResMut<PendingEvents>,
     mut pending_phase: ResMut<PendingPhase>,
@@ -1366,13 +1385,17 @@ fn apply_actions(
     if pending_phase.0.is_some() || anim.busy() || !pending_events.0.is_empty() {
         return;
     }
-    let actions = std::mem::take(&mut queue.0);
-    if actions.is_empty() {
+    let decisions = std::mem::take(&mut queue.0);
+    if decisions.is_empty() {
         return;
     }
-    for action in actions {
+    for decision in decisions {
         let pid = model.0.current_id();
-        let result = match apply_action(&mut model.0, pid, action.to_player_action()) {
+        let is_choose_noble = matches!(
+            decision,
+            QueuedRuleDecision::Resume(Resume::ChooseNoble(_))
+        );
+        let result = match apply_queued_decision(&mut model.0, pid, decision) {
             Ok(r) => r,
             Err(e) => {
                 ***status = rule_error_message(e).to_string();
@@ -1383,11 +1406,17 @@ fn apply_actions(
         if let Some(cands) = final_noble_candidates(&result.outcome) {
             pending_nobles.0 = Some(cands);
         }
+        // ChooseNoble resume 完成后清空暂存候选（已落地）。
+        // 注意：discard resume 虽也返回 Complete，但若存在 final-discard 暂存候选
+        // 必须保留到后续 noble choice，故只在 choose_noble 路径清。
+        if is_choose_noble && pending_nobles.0.is_some() {
+            pending_nobles.0 = None;
+        }
         // GameOver 优先
         if let Some(phase) = game_over_phase(&result.events) {
             pending_events.0.extend(result.events);
             pending_phase.0 = Some(phase);
-        } else if let Some(phase) = outcome_to_pending(result.outcome) {
+        } else if let Some(phase) = route_outcome(result.outcome) {
             pending_events.0.extend(result.events);
             pending_phase.0 = Some(phase);
         } else {
@@ -1397,6 +1426,18 @@ fn apply_actions(
     }
     // 让 status/dirty 反映；事件播放系统会逐个置 dirty
     let _ = (&mut commands, &mut dirty);
+}
+
+/// 把队列项映射到对应规则层 API（apply_action 或 resume）。
+fn apply_queued_decision(
+    state: &mut GameState,
+    player: PlayerId,
+    decision: QueuedRuleDecision,
+) -> Result<ActionResult, RuleError> {
+    match decision {
+        QueuedRuleDecision::Action(action) => apply_action(state, player, action),
+        QueuedRuleDecision::Resume(resume_decision) => resume(state, player, resume_decision),
+    }
 }
 
 fn rule_error_message(e: RuleError) -> &'static str {
@@ -1978,15 +2019,11 @@ fn spawn_gameover_overlay(
 
 fn discard_overlay_input(
     phase: Res<BattlePhase>,
-    mut model: ResMut<BattleModel>,
+    model: Res<BattleModel>,
     mut buf: ResMut<DiscardBuffer>,
     return_btns: Query<(&Interaction, &DiscardReturnButton), Changed<Interaction>>,
     confirm: Query<&Interaction, (Changed<Interaction>, With<DiscardConfirmButton>)>,
-    mut pending_events: ResMut<PendingEvents>,
-    mut pending_phase: ResMut<PendingPhase>,
-    pending_nobles: Res<PendingNobleCandidates>,
-    mut turn: ResMut<TurnCount>,
-    mut status: Single<&mut Text, With<StatusText>>,
+    mut queue: ResMut<RuleDecisionQueue>,
     overlays: Query<Entity, With<Overlay>>,
     mut commands: Commands,
 ) {
@@ -2007,25 +2044,14 @@ fn discard_overlay_input(
         if matches!(*interaction, Interaction::Pressed)
             && buf.returned.total() == buf.excess
         {
+            // 入队 resume 决策；交由 apply_rule_decisions 落地，本系统只管 UI。
             let returned = buf.returned;
-            match resume(&mut model.0, pid, Resume::DiscardTokens(returned)) {
-                Ok(r) => {
-                    pending_events.0.extend(r.events);
-                    turn.0 += 1;
-                    // 清覆盖层
-                    for e in &overlays {
-                        commands.entity(e).despawn();
-                    }
-                    // 若有暂存贵族候选 -> 进 NobleChoice；否则回 Idle
-                    if let Some(cands) = pending_nobles.0.clone() {
-                        pending_phase.0 = Some(BattlePhase::AwaitNobleChoice { candidates: cands });
-                    } else {
-                        pending_phase.0 = None; // Idle
-                    }
-                }
-                Err(e) => {
-                    ***status = rule_error_message(e).to_string();
-                }
+            queue
+                .0
+                .push(QueuedRuleDecision::Resume(Resume::DiscardTokens(returned)));
+            // 清覆盖层；后续 phase 切换由 apply_rule_decisions 路由 outcome 完成。
+            for e in &overlays {
+                commands.entity(e).despawn();
             }
         }
     }
@@ -2034,12 +2060,7 @@ fn discard_overlay_input(
 fn noble_overlay_input(
     phase: Res<BattlePhase>,
     choices: Query<(&Interaction, &NobleChoiceButton), Changed<Interaction>>,
-    mut model: ResMut<BattleModel>,
-    mut pending_events: ResMut<PendingEvents>,
-    mut pending_phase: ResMut<PendingPhase>,
-    mut pending_nobles: ResMut<PendingNobleCandidates>,
-    mut turn: ResMut<TurnCount>,
-    mut status: Single<&mut Text, With<StatusText>>,
+    mut queue: ResMut<RuleDecisionQueue>,
     overlays: Query<Entity, With<Overlay>>,
     mut commands: Commands,
 ) {
@@ -2048,20 +2069,12 @@ fn noble_overlay_input(
     }
     for (interaction, btn) in &choices {
         if matches!(*interaction, Interaction::Pressed) {
-            let pid = model.0.current_id();
-            match resume(&mut model.0, pid, Resume::ChooseNoble(btn.0)) {
-                Ok(r) => {
-                    pending_events.0.extend(r.events);
-                    turn.0 += 1;
-                    pending_nobles.0 = None;
-                    pending_phase.0 = None; // Idle（或 GameOver 由事件触发）
-                    for e in &overlays {
-                        commands.entity(e).despawn();
-                    }
-                }
-                Err(e) => {
-                    ***status = rule_error_message(e).to_string();
-                }
+            // 入队 resume 决策；交由 apply_rule_decisions 落地，本系统只管 UI。
+            queue
+                .0
+                .push(QueuedRuleDecision::Resume(Resume::ChooseNoble(btn.0)));
+            for e in &overlays {
+                commands.entity(e).despawn();
             }
         }
     }
@@ -2086,7 +2099,7 @@ fn keyboard_actions(
     keys: Res<ButtonInput<KeyCode>>,
     focusables: Query<&Focusable>,
     mut focus: ResMut<FocusCursor>,
-    mut queue: ResMut<ActionQueue>,
+    mut queue: ResMut<RuleDecisionQueue>,
     mut picker: ResMut<TokenPicker>,
     model: Res<BattleModel>,
     mut next_state: ResMut<NextState<AppState>>,
@@ -2108,10 +2121,14 @@ fn keyboard_actions(
     if keys.just_pressed(KeyCode::Enter) {
         match focus.zone {
             FocusZone::Market { level, slot } => {
-                queue.0.push(BattleAction::BuyVisibleCard { level, idx: slot });
+                queue
+                    .0
+                    .push(QueuedRuleDecision::Action(BattleAction::BuyVisibleCard { level, idx: slot }.to_player_action()));
             }
             FocusZone::DeckReserve { level } => {
-                queue.0.push(BattleAction::ReserveDeckCard(level));
+                queue
+                    .0
+                    .push(QueuedRuleDecision::Action(BattleAction::ReserveDeckCard(level).to_player_action()));
             }
             FocusZone::Supply { color } => {
                 if picker.selected.len() < 3
@@ -2122,13 +2139,17 @@ fn keyboard_actions(
                 }
             }
             FocusZone::SupplyX2 { color } => {
-                queue.0.push(BattleAction::TakeTwoSameTokens(color));
+                queue
+                    .0
+                    .push(QueuedRuleDecision::Action(BattleAction::TakeTwoSameTokens(color).to_player_action()));
                 picker.selected.clear();
             }
             FocusZone::ConfirmTake3 => {
                 if picker.selected.len() == 3 {
                     let t = Triple([picker.selected[0], picker.selected[1], picker.selected[2]]);
-                    queue.0.push(BattleAction::TakeThreeDifferentTokens(t));
+                    queue
+                        .0
+                        .push(QueuedRuleDecision::Action(BattleAction::TakeThreeDifferentTokens(t).to_player_action()));
                     picker.selected.clear();
                 }
             }
@@ -2137,11 +2158,15 @@ fn keyboard_actions(
             }
             FocusZone::Reserved { player, idx } => {
                 if player == model.0.current_id() {
-                    queue.0.push(BattleAction::BuyReservedCard(idx));
+                    queue
+                        .0
+                        .push(QueuedRuleDecision::Action(BattleAction::BuyReservedCard(idx).to_player_action()));
                 }
             }
             FocusZone::ReserveMarket { level, slot } => {
-                queue.0.push(BattleAction::ReserveVisibleCard { level, idx: slot });
+                queue
+                    .0
+                    .push(QueuedRuleDecision::Action(BattleAction::ReserveVisibleCard { level, idx: slot }.to_player_action()));
             }
         }
     }
@@ -2611,5 +2636,23 @@ mod tests {
             candidates: vec![3],
         });
         assert!(matches!(p, Some(BattlePhase::AwaitDiscard { excess: 1 })));
+    }
+
+    #[test]
+    fn queued_ai_and_human_decisions_share_rule_commands() {
+        assert!(matches!(
+            QueuedRuleDecision::Action(PlayerAction::TakeTwoSameTokens(GemColor::Red)),
+            QueuedRuleDecision::Action(_),
+        ));
+        assert!(matches!(
+            QueuedRuleDecision::Resume(Resume::ChooseNoble(2)),
+            QueuedRuleDecision::Resume(_),
+        ));
+    }
+
+    #[test]
+    fn routed_outcome_preserves_pending_choice() {
+        let route = route_outcome(ActionOutcome::NeedDiscardTokens { excess: 2 });
+        assert_eq!(route, Some(BattlePhase::AwaitDiscard { excess: 2 }));
     }
 }
