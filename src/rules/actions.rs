@@ -5,7 +5,7 @@ use crate::rules::color::{CardColor, GemColor, PlayerId};
 use crate::rules::error::RuleError;
 use crate::rules::events::GameEvent;
 use crate::rules::noble::NobleId;
-use crate::rules::player::TOKEN_LIMIT;
+use crate::rules::player::{ReserveOrigin, ReservedCard, TOKEN_LIMIT};
 use crate::rules::scoring::{eligible_nobles, standings};
 use crate::rules::state::GameState;
 use crate::rules::token::TokenSet;
@@ -17,18 +17,53 @@ use crate::rules::validation::{
 pub enum PlayerAction {
     TakeThreeDifferentTokens(Vec<GemColor>),
     TakeTwoSameTokens(GemColor),
-    ReserveVisibleCard { level: crate::rules::card::CardLevel, idx: usize },
+    ReserveVisibleCard {
+        level: crate::rules::card::CardLevel,
+        idx: usize,
+    },
     ReserveDeckCard(crate::rules::card::CardLevel),
-    BuyVisibleCard { level: crate::rules::card::CardLevel, idx: usize },
+    BuyVisibleCard {
+        level: crate::rules::card::CardLevel,
+        idx: usize,
+    },
     BuyReservedCard(usize),
+}
+
+// `PlayerAction` 含 `Vec<GemColor>`，无法 derive(Hash)；手动按判别 + 字段哈希，
+// 使其可作为 MCTS 信息集 / 树边键使用。`Vec<T: Hash>` 逐元素哈希等价于切片哈希。
+impl std::hash::Hash for PlayerAction {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Self::TakeThreeDifferentTokens(colors) => colors.hash(state),
+            Self::TakeTwoSameTokens(color) => color.hash(state),
+            Self::ReserveVisibleCard { level, idx } => {
+                level.hash(state);
+                idx.hash(state);
+            }
+            Self::ReserveDeckCard(level) => level.hash(state),
+            Self::BuyVisibleCard { level, idx } => {
+                level.hash(state);
+                idx.hash(state);
+            }
+            Self::BuyReservedCard(idx) => idx.hash(state),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ActionOutcome {
     Complete,
-    NeedDiscardTokens { excess: u8 },
-    NeedChooseNoble { candidates: Vec<crate::rules::noble::NobleId> },
-    NeedFinalDiscardThenChooseNoble { excess: u8, candidates: Vec<crate::rules::noble::NobleId> },
+    NeedDiscardTokens {
+        excess: u8,
+    },
+    NeedChooseNoble {
+        candidates: Vec<crate::rules::noble::NobleId>,
+    },
+    NeedFinalDiscardThenChooseNoble {
+        excess: u8,
+        candidates: Vec<crate::rules::noble::NobleId>,
+    },
 }
 
 impl ActionOutcome {
@@ -81,6 +116,49 @@ pub fn validate_action(
     validate(action, state, player)
 }
 
+/// 穷举当前玩家所有合法的"主行动"（不含弃牌/选贵族续接）。
+/// 先生成候选，再用 validate_action 过滤；结果无重复且每个都通过校验。
+/// AI 与 UI 共用此单一权威入口，避免在搜索层复制规则。
+pub fn legal_actions(state: &GameState, player: PlayerId) -> Vec<PlayerAction> {
+    if state.is_over() || state.current_id() != player {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    // 拿 3 个不同普通色：所有 5 选 3 组合。
+    for a in 0..GemColor::NORMAL.len() {
+        for b in (a + 1)..GemColor::NORMAL.len() {
+            for c in (b + 1)..GemColor::NORMAL.len() {
+                candidates.push(PlayerAction::TakeThreeDifferentTokens(vec![
+                    GemColor::NORMAL[a],
+                    GemColor::NORMAL[b],
+                    GemColor::NORMAL[c],
+                ]));
+            }
+        }
+    }
+    // 拿 2 个同色：每个普通色。
+    for color in GemColor::NORMAL {
+        candidates.push(PlayerAction::TakeTwoSameTokens(color));
+    }
+    // 保留/购买：每个可见市场位置 + 每个非空牌堆 + 己方每个保留槽。
+    for level in CardLevel::ALL {
+        for idx in 0..state.market.visible(level).len() {
+            candidates.push(PlayerAction::ReserveVisibleCard { level, idx });
+            candidates.push(PlayerAction::BuyVisibleCard { level, idx });
+        }
+        candidates.push(PlayerAction::ReserveDeckCard(level));
+    }
+    for idx in 0..state.player(player).reserved_cards.len() {
+        candidates.push(PlayerAction::BuyReservedCard(idx));
+    }
+
+    candidates
+        .into_iter()
+        .filter(|action| validate_action(state, player, action).is_ok())
+        .collect()
+}
+
 pub fn resume(
     state: &mut GameState,
     player: PlayerId,
@@ -97,7 +175,10 @@ pub fn resume(
         // 弃牌只发生在"拿筹码/保留得金"后；这些行动不触发贵族、不触发终局。
         // 故弃牌后只归还筹码并推进回合，无需 check_nobles/end_game。
         Resume::DiscardTokens(returned) => {
-            let excess = state.player(player).token_total().saturating_sub(TOKEN_LIMIT);
+            let excess = state
+                .player(player)
+                .token_total()
+                .saturating_sub(TOKEN_LIMIT);
             if returned.total() != excess {
                 return Err(RuleError::InvalidResume);
             }
@@ -118,7 +199,10 @@ pub fn resume(
                 }
                 state.bank.give(GemColor::Gold, gold);
             }
-            events.push(GameEvent::TokensReturned { player, tokens: returned });
+            events.push(GameEvent::TokensReturned {
+                player,
+                tokens: returned,
+            });
             advance_turn(state);
             maybe_finalize(state, &mut events);
         }
@@ -133,7 +217,10 @@ pub fn resume(
             check_end_and_advance(state, player, &mut events)?;
         }
     }
-    Ok(ActionResult { outcome: ActionOutcome::Complete, events })
+    Ok(ActionResult {
+        outcome: ActionOutcome::Complete,
+        events,
+    })
 }
 
 fn validate(action: &PlayerAction, state: &GameState, player: PlayerId) -> Result<(), RuleError> {
@@ -166,12 +253,15 @@ fn validate(action: &PlayerAction, state: &GameState, player: PlayerId) -> Resul
             can_afford(state.player(player).tokens, card, bonus)
         }
         PlayerAction::BuyReservedCard(reserved_idx) => {
-            let &card_id = state
+            let &reserved = state
                 .player(player)
                 .reserved_cards
                 .get(*reserved_idx)
                 .ok_or(RuleError::CardNotFound)?;
-            let card = state.card_store.get(card_id).ok_or(RuleError::CardNotFound)?;
+            let card = state
+                .card_store
+                .get(reserved.card_id)
+                .ok_or(RuleError::CardNotFound)?;
             let bonus = state.player(player).bonus(&state.card_store);
             can_afford(state.player(player).tokens, card, bonus)
         }
@@ -192,7 +282,10 @@ fn execute(
                 state.player_mut(player).tokens.add(*c, 1);
                 taken.add(*c, 1);
             }
-            events.push(GameEvent::TokensTaken { player, tokens: taken });
+            events.push(GameEvent::TokensTaken {
+                player,
+                tokens: taken,
+            });
             Ok(discard_or_finish_tokens(state, player, events))
         }
         PlayerAction::TakeTwoSameTokens(color) => {
@@ -200,40 +293,73 @@ fn execute(
             state.player_mut(player).tokens.add(*color, 2);
             let mut taken = TokenSet::default();
             taken.add(*color, 2);
-            events.push(GameEvent::TokensTaken { player, tokens: taken });
+            events.push(GameEvent::TokensTaken {
+                player,
+                tokens: taken,
+            });
             Ok(discard_or_finish_tokens(state, player, events))
         }
         PlayerAction::ReserveVisibleCard { level, idx } => {
-            let card = state.market.take(*level, *idx).ok_or(RuleError::CardNotFound)?;
-            state.player_mut(player).reserved_cards.push(card.id);
+            let card = state
+                .market
+                .take(*level, *idx)
+                .ok_or(RuleError::CardNotFound)?;
+            let reserved = ReservedCard::new(card.id, ReserveOrigin::Market);
+            state.player_mut(player).reserved_cards.push(reserved);
             let got_gold = reserve_gold(state, player);
             if let Some(new_id) = state.market.refill(*level, &mut state.decks) {
-                events.push(GameEvent::MarketRefilled { level: *level, card: Some(new_id) });
+                events.push(GameEvent::MarketRefilled {
+                    level: *level,
+                    card: Some(new_id),
+                });
             } else {
-                events.push(GameEvent::MarketRefilled { level: *level, card: None });
+                events.push(GameEvent::MarketRefilled {
+                    level: *level,
+                    card: None,
+                });
             }
-            events.push(GameEvent::CardReserved { player, card: card.id, from_deck: false, got_gold });
+            events.push(GameEvent::CardReserved {
+                player,
+                card: card.id,
+                origin: reserved.origin,
+                got_gold,
+            });
             Ok(discard_or_finish_tokens(state, player, events))
         }
         PlayerAction::ReserveDeckCard(level) => {
             let card = state.decks.pop(*level).ok_or(RuleError::DeckEmpty)?;
-            state.player_mut(player).reserved_cards.push(card.id);
+            let reserved = ReservedCard::new(card.id, ReserveOrigin::BlindDeck(*level));
+            state.player_mut(player).reserved_cards.push(reserved);
             let got_gold = reserve_gold(state, player);
-            events.push(GameEvent::CardReserved { player, card: card.id, from_deck: true, got_gold });
+            events.push(GameEvent::CardReserved {
+                player,
+                card: card.id,
+                origin: reserved.origin,
+                got_gold,
+            });
             Ok(discard_or_finish_tokens(state, player, events))
         }
         PlayerAction::BuyVisibleCard { level, idx } => {
-            let card = state.market.take(*level, *idx).ok_or(RuleError::CardNotFound)?;
+            let card = state
+                .market
+                .take(*level, *idx)
+                .ok_or(RuleError::CardNotFound)?;
             buy_card(state, player, card, events, true, *level)
         }
         PlayerAction::BuyReservedCard(reserved_idx) => {
-            let card_id = *state
+            let reserved = *state
                 .player(player)
                 .reserved_cards
                 .get(*reserved_idx)
                 .ok_or(RuleError::CardNotFound)?;
-            let card = *state.card_store.get(card_id).ok_or(RuleError::CardNotFound)?;
-            state.player_mut(player).reserved_cards.remove(*reserved_idx);
+            let card = *state
+                .card_store
+                .get(reserved.card_id)
+                .ok_or(RuleError::CardNotFound)?;
+            state
+                .player_mut(player)
+                .reserved_cards
+                .remove(*reserved_idx);
             buy_card(state, player, card, events, false, card.level)
         }
     }
@@ -258,7 +384,9 @@ fn discard_or_finish_tokens(
 ) -> ActionOutcome {
     let total = state.player(player).token_total();
     if total > TOKEN_LIMIT {
-        return ActionOutcome::NeedDiscardTokens { excess: total - TOKEN_LIMIT };
+        return ActionOutcome::NeedDiscardTokens {
+            excess: total - TOKEN_LIMIT,
+        };
     }
     advance_turn(state);
     maybe_finalize(state, events);
@@ -284,14 +412,24 @@ fn buy_card(
     }
     let gold_used = paid.get(GemColor::Gold);
     if gold_used > 0 {
-        state.player_mut(player).tokens.remove(GemColor::Gold, gold_used);
+        state
+            .player_mut(player)
+            .tokens
+            .remove(GemColor::Gold, gold_used);
         state.bank.give(GemColor::Gold, gold_used);
     }
     state.player_mut(player).purchased_cards.push(card.id);
-    events.push(GameEvent::CardPurchased { player, card: card.id, paid });
+    events.push(GameEvent::CardPurchased {
+        player,
+        card: card.id,
+        paid,
+    });
     if from_market {
         if let Some(new_id) = state.market.refill(level, &mut state.decks) {
-            events.push(GameEvent::MarketRefilled { level, card: Some(new_id) });
+            events.push(GameEvent::MarketRefilled {
+                level,
+                card: Some(new_id),
+            });
         } else {
             events.push(GameEvent::MarketRefilled { level, card: None });
         }
@@ -321,10 +459,18 @@ fn finish_after_buy(
     }
 }
 
-fn grant_noble(state: &mut GameState, player: PlayerId, noble_id: NobleId, events: &mut Vec<GameEvent>) {
+fn grant_noble(
+    state: &mut GameState,
+    player: PlayerId,
+    noble_id: NobleId,
+    events: &mut Vec<GameEvent>,
+) {
     if state.nobles.take(noble_id).is_some() {
         state.player_mut(player).nobles.push(noble_id);
-        events.push(GameEvent::NobleVisited { player, noble: noble_id });
+        events.push(GameEvent::NobleVisited {
+            player,
+            noble: noble_id,
+        });
     }
 }
 
@@ -337,7 +483,9 @@ fn check_end_and_advance(
     player: PlayerId,
     events: &mut Vec<GameEvent>,
 ) -> Result<(), RuleError> {
-    let score = state.player(player).score(&state.card_store, &state.noble_store);
+    let score = state
+        .player(player)
+        .score(&state.card_store, &state.noble_store);
     if !state.end_triggered && score >= GameState::win_score() {
         state.end_triggered = true;
         state.final_player = Some(player);
@@ -367,7 +515,10 @@ fn finalize_game(state: &mut GameState, events: &mut Vec<GameEvent>) {
     let s = standings(&state.players, &state.card_store, &state.noble_store);
     let winner = s.first().map(|(id, _)| *id);
     state.winner = winner;
-    events.push(GameEvent::GameOver { winner: winner.unwrap_or(0), standings: s });
+    events.push(GameEvent::GameOver {
+        winner: winner.unwrap_or(0),
+        standings: s,
+    });
 }
 
 #[cfg(test)]
@@ -385,17 +536,38 @@ mod tests {
     #[test]
     fn take_three_different_moves_tokens_from_bank() {
         let mut g = game2();
-        let r = apply_action(&mut g, 0, PlayerAction::TakeThreeDifferentTokens(vec![GemColor::White, GemColor::Blue, GemColor::Green])).unwrap();
+        let r = apply_action(
+            &mut g,
+            0,
+            PlayerAction::TakeThreeDifferentTokens(vec![
+                GemColor::White,
+                GemColor::Blue,
+                GemColor::Green,
+            ]),
+        )
+        .unwrap();
         assert!(matches!(r.outcome, ActionOutcome::Complete));
         assert_eq!(g.player(0).token_count(GemColor::White), 1);
         assert_eq!(g.bank.tokens.white, 3);
-        assert!(r.events.iter().any(|e| matches!(e, GameEvent::TokensTaken { player: 0, .. })));
+        assert!(
+            r.events
+                .iter()
+                .any(|e| matches!(e, GameEvent::TokensTaken { player: 0, .. }))
+        );
     }
 
     #[test]
     fn take_three_different_rejects_duplicate() {
         let mut g = game2();
-        let r = apply_action(&mut g, 0, PlayerAction::TakeThreeDifferentTokens(vec![GemColor::White, GemColor::White, GemColor::Blue]));
+        let r = apply_action(
+            &mut g,
+            0,
+            PlayerAction::TakeThreeDifferentTokens(vec![
+                GemColor::White,
+                GemColor::White,
+                GemColor::Blue,
+            ]),
+        );
         assert_eq!(r.unwrap_err(), RuleError::InvalidTokenSelection);
     }
 
@@ -421,14 +593,33 @@ mod tests {
     fn reserve_visible_takes_gold_and_refills_immediately() {
         let mut g = game2();
         let gold_before = g.bank.tokens.gold;
-        let r = apply_action(&mut g, 0, PlayerAction::ReserveVisibleCard { level: CardLevel::Level1, idx: 0 }).unwrap();
+        let r = apply_action(
+            &mut g,
+            0,
+            PlayerAction::ReserveVisibleCard {
+                level: CardLevel::Level1,
+                idx: 0,
+            },
+        )
+        .unwrap();
         assert_eq!(g.player(0).reserved_cards.len(), 1);
         assert_eq!(g.player(0).token_count(GemColor::Gold), 1);
         assert_eq!(g.bank.tokens.gold, gold_before - 1);
         // 立即补牌：可见仍 4 张。
         assert_eq!(g.market.visible(CardLevel::Level1).len(), 4);
-        assert!(r.events.iter().any(|e| matches!(e, GameEvent::CardReserved { from_deck: false, got_gold: true, .. })));
-        assert!(r.events.iter().any(|e| matches!(e, GameEvent::MarketRefilled { .. })));
+        assert!(r.events.iter().any(|e| matches!(
+            e,
+            GameEvent::CardReserved {
+                origin: ReserveOrigin::Market,
+                got_gold: true,
+                ..
+            }
+        )));
+        assert!(
+            r.events
+                .iter()
+                .any(|e| matches!(e, GameEvent::MarketRefilled { .. }))
+        );
     }
 
     #[test]
@@ -438,7 +629,13 @@ mod tests {
         let r = apply_action(&mut g, 0, PlayerAction::ReserveDeckCard(CardLevel::Level1)).unwrap();
         assert_eq!(g.player(0).reserved_cards.len(), 1);
         assert_eq!(g.decks.remaining(CardLevel::Level1), before - 1);
-        assert!(r.events.iter().any(|e| matches!(e, GameEvent::CardReserved { from_deck: true, .. })));
+        assert!(r.events.iter().any(|e| matches!(
+            e,
+            GameEvent::CardReserved {
+                origin: ReserveOrigin::BlindDeck(CardLevel::Level1),
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -448,8 +645,7 @@ mod tests {
         apply_action(&mut g, 0, PlayerAction::ReserveDeckCard(CardLevel::Level1)).unwrap();
         apply_action(&mut g, 1, PlayerAction::ReserveDeckCard(CardLevel::Level1)).unwrap();
         apply_action(&mut g, 0, PlayerAction::ReserveDeckCard(CardLevel::Level1)).unwrap();
-        apply_action(&mut g, 1, PlayerAction::ReserveDeckCard(CardLevel::Level1)).unwrap()
-            ;
+        apply_action(&mut g, 1, PlayerAction::ReserveDeckCard(CardLevel::Level1)).unwrap();
         apply_action(&mut g, 0, PlayerAction::ReserveDeckCard(CardLevel::Level1)).unwrap();
         assert_eq!(g.player(0).reserved_cards.len(), 3);
         // 玩家 1 行动后轮到 0，此时 0 已满 3，再保留应被拒。
@@ -468,14 +664,34 @@ mod tests {
             level: CardLevel::Level1,
             color: crate::rules::color::CardColor::White,
             prestige: 1,
-            cost: GemCost { white: 0, blue: 2, green: 0, red: 3, black: 0 },
+            cost: GemCost {
+                white: 0,
+                blue: 2,
+                green: 0,
+                red: 3,
+                black: 0,
+            },
         };
         g.market.level1_visible[0] = card;
         g.card_store = crate::rules::card::CardStore::from_cards(&[card]);
         // 给玩家白2 蓝2 红2 金2 以支付 红3（白0 蓝2 红2 不足红1，金补1）
-        g.players[0].tokens = TokenSet { white: 2, blue: 2, red: 2, gold: 2, ..Default::default() };
+        g.players[0].tokens = TokenSet {
+            white: 2,
+            blue: 2,
+            red: 2,
+            gold: 2,
+            ..Default::default()
+        };
         let bank_before = g.bank.tokens;
-        let r = apply_action(&mut g, 0, PlayerAction::BuyVisibleCard { level: CardLevel::Level1, idx: 0 }).unwrap();
+        let r = apply_action(
+            &mut g,
+            0,
+            PlayerAction::BuyVisibleCard {
+                level: CardLevel::Level1,
+                idx: 0,
+            },
+        )
+        .unwrap();
         assert!(matches!(r.outcome, ActionOutcome::Complete));
         assert!(g.player(0).purchased_cards.contains(&999));
         assert_eq!(g.player(0).token_count(GemColor::Red), 0); // 红2 全付
@@ -485,7 +701,14 @@ mod tests {
         assert_eq!(g.bank.tokens.red, bank_before.red + 2);
         assert_eq!(g.bank.tokens.blue, bank_before.blue + 2);
         assert_eq!(g.bank.tokens.gold, bank_before.gold + 1);
-        assert!(r.events.iter().any(|e| matches!(e, GameEvent::CardPurchased { player: 0, card: 999, .. })));
+        assert!(r.events.iter().any(|e| matches!(
+            e,
+            GameEvent::CardPurchased {
+                player: 0,
+                card: 999,
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -496,11 +719,24 @@ mod tests {
             level: CardLevel::Level1,
             color: crate::rules::color::CardColor::White,
             prestige: 0,
-            cost: GemCost { white: 0, blue: 5, green: 0, red: 0, black: 0 },
+            cost: GemCost {
+                white: 0,
+                blue: 5,
+                green: 0,
+                red: 0,
+                black: 0,
+            },
         };
         g.market.level1_visible[0] = card;
         g.card_store = crate::rules::card::CardStore::from_cards(&[card]);
-        let r = apply_action(&mut g, 0, PlayerAction::BuyVisibleCard { level: CardLevel::Level1, idx: 0 });
+        let r = apply_action(
+            &mut g,
+            0,
+            PlayerAction::BuyVisibleCard {
+                level: CardLevel::Level1,
+                idx: 0,
+            },
+        );
         assert_eq!(r.unwrap_err(), RuleError::CannotAfford);
     }
 
@@ -508,9 +744,26 @@ mod tests {
     fn token_limit_triggers_discard() {
         // 玩家已持 9 筹码，拿 3 不同 -> 12，超 10，excess=2。
         let mut g = game2();
-        g.players[0].tokens = TokenSet { white: 3, blue: 3, green: 3, ..Default::default() }; // 9 个
-        let r = apply_action(&mut g, 0, PlayerAction::TakeThreeDifferentTokens(vec![GemColor::White, GemColor::Blue, GemColor::Green])).unwrap();
-        assert!(matches!(r.outcome, ActionOutcome::NeedDiscardTokens { excess: 2 }));
+        g.players[0].tokens = TokenSet {
+            white: 3,
+            blue: 3,
+            green: 3,
+            ..Default::default()
+        }; // 9 个
+        let r = apply_action(
+            &mut g,
+            0,
+            PlayerAction::TakeThreeDifferentTokens(vec![
+                GemColor::White,
+                GemColor::Blue,
+                GemColor::Green,
+            ]),
+        )
+        .unwrap();
+        assert!(matches!(
+            r.outcome,
+            ActionOutcome::NeedDiscardTokens { excess: 2 }
+        ));
         // 回合未推进（仍玩家 0）。
         assert_eq!(g.current_player, 0);
     }
@@ -520,19 +773,52 @@ mod tests {
         // 玩家 0 直接给 14 分，买一张 1 分卡 -> 15 触发。
         let mut g = game2();
         // 给玩家 0 一张已购的 14 分卡（构造 store 支持）。
-        let big = crate::rules::card::DevelopmentCard { id: 1000, level: CardLevel::Level3, color: crate::rules::color::CardColor::White, prestige: 14, cost: GemCost::default() };
-        let target = crate::rules::card::DevelopmentCard { id: 1001, level: CardLevel::Level1, color: crate::rules::color::CardColor::White, prestige: 1, cost: GemCost::default() };
+        let big = crate::rules::card::DevelopmentCard {
+            id: 1000,
+            level: CardLevel::Level3,
+            color: crate::rules::color::CardColor::White,
+            prestige: 14,
+            cost: GemCost::default(),
+        };
+        let target = crate::rules::card::DevelopmentCard {
+            id: 1001,
+            level: CardLevel::Level1,
+            color: crate::rules::color::CardColor::White,
+            prestige: 1,
+            cost: GemCost::default(),
+        };
         g.card_store = crate::rules::card::CardStore::from_cards(&[big, target]);
         g.players[0].purchased_cards.push(1000);
         g.market.level1_visible[0] = target;
-        let r = apply_action(&mut g, 0, PlayerAction::BuyVisibleCard { level: CardLevel::Level1, idx: 0 }).unwrap();
+        let r = apply_action(
+            &mut g,
+            0,
+            PlayerAction::BuyVisibleCard {
+                level: CardLevel::Level1,
+                idx: 0,
+            },
+        )
+        .unwrap();
         assert!(g.end_triggered);
-        assert!(r.events.iter().any(|e| matches!(e, GameEvent::EndGameTriggered { player: 0 })));
+        assert!(
+            r.events
+                .iter()
+                .any(|e| matches!(e, GameEvent::EndGameTriggered { player: 0 }))
+        );
         // 2 人局：玩家 0 触发后，玩家 1 还需行动一次才结算。当前应轮到 1。
         assert_eq!(g.current_player, 1);
         assert!(g.winner.is_none());
         // 玩家 1 行动后结算。
-        apply_action(&mut g, 1, PlayerAction::TakeThreeDifferentTokens(vec![GemColor::White, GemColor::Blue, GemColor::Green])).unwrap();
+        apply_action(
+            &mut g,
+            1,
+            PlayerAction::TakeThreeDifferentTokens(vec![
+                GemColor::White,
+                GemColor::Blue,
+                GemColor::Green,
+            ]),
+        )
+        .unwrap();
         assert!(g.is_over());
         assert_eq!(g.winner, Some(0));
     }
@@ -540,11 +826,31 @@ mod tests {
     #[test]
     fn resume_discard_returns_tokens_and_advances() {
         let mut g = game2();
-        g.players[0].tokens = TokenSet { white: 3, blue: 3, green: 3, ..Default::default() }; // 9
-        let r = apply_action(&mut g, 0, PlayerAction::TakeThreeDifferentTokens(vec![GemColor::White, GemColor::Blue, GemColor::Green])).unwrap();
-        let excess = match r.outcome { ActionOutcome::NeedDiscardTokens { excess } => excess, _ => panic!() };
+        g.players[0].tokens = TokenSet {
+            white: 3,
+            blue: 3,
+            green: 3,
+            ..Default::default()
+        }; // 9
+        let r = apply_action(
+            &mut g,
+            0,
+            PlayerAction::TakeThreeDifferentTokens(vec![
+                GemColor::White,
+                GemColor::Blue,
+                GemColor::Green,
+            ]),
+        )
+        .unwrap();
+        let excess = match r.outcome {
+            ActionOutcome::NeedDiscardTokens { excess } => excess,
+            _ => panic!(),
+        };
         assert_eq!(excess, 2);
-        let returned = TokenSet { white: 2, ..Default::default() };
+        let returned = TokenSet {
+            white: 2,
+            ..Default::default()
+        };
         let r2 = resume(&mut g, 0, Resume::DiscardTokens(returned)).unwrap();
         assert!(matches!(r2.outcome, ActionOutcome::Complete));
         assert_eq!(g.player(0).token_total(), 10);
@@ -555,27 +861,123 @@ mod tests {
     fn resume_choose_noble_grants_noble() {
         let mut g = game2();
         // 构造玩家满足两个贵族。
-        let big = crate::rules::card::DevelopmentCard { id: 2000, level: CardLevel::Level3, color: crate::rules::color::CardColor::White, prestige: 0, cost: GemCost::default() };
+        let big = crate::rules::card::DevelopmentCard {
+            id: 2000,
+            level: CardLevel::Level3,
+            color: crate::rules::color::CardColor::White,
+            prestige: 0,
+            cost: GemCost::default(),
+        };
         g.card_store = crate::rules::card::CardStore::from_cards(&[big]);
         // 给玩家白色 4 蓝色 4 已购卡（满足 4W4B 与另一 3W3B3G? 此处仅造一个双候选场景）
         for _ in 0..4 {
             g.players[0].purchased_cards.push(2000); // 白色 +4
         }
         // 贵族：放两个 4W4B 与 3W3B3G 都需满足——简化：放两个相同要求 4W4B 的可用贵族。
-        let n1 = crate::rules::noble::Noble { id: 50, prestige: 3, requirement: GemCost { white: 4, blue: 0, green: 0, red: 0, black: 0 } };
-        let n2 = crate::rules::noble::Noble { id: 51, prestige: 3, requirement: GemCost { white: 4, blue: 0, green: 0, red: 0, black: 0 } };
-        g.nobles = crate::rules::noble::NobleBoard { available: vec![n1, n2], taken: vec![] };
+        let n1 = crate::rules::noble::Noble {
+            id: 50,
+            prestige: 3,
+            requirement: GemCost {
+                white: 4,
+                blue: 0,
+                green: 0,
+                red: 0,
+                black: 0,
+            },
+        };
+        let n2 = crate::rules::noble::Noble {
+            id: 51,
+            prestige: 3,
+            requirement: GemCost {
+                white: 4,
+                blue: 0,
+                green: 0,
+                red: 0,
+                black: 0,
+            },
+        };
+        g.nobles = crate::rules::noble::NobleBoard {
+            available: vec![n1, n2],
+            taken: vec![],
+        };
         g.noble_store = crate::rules::noble::NobleStore::from_nobles(&[n1, n2]);
         // 买一张 0 分卡触发贵族检查。
-        let target = crate::rules::card::DevelopmentCard { id: 2001, level: CardLevel::Level1, color: crate::rules::color::CardColor::White, prestige: 0, cost: GemCost::default() };
+        let target = crate::rules::card::DevelopmentCard {
+            id: 2001,
+            level: CardLevel::Level1,
+            color: crate::rules::color::CardColor::White,
+            prestige: 0,
+            cost: GemCost::default(),
+        };
         g.market.level1_visible[0] = target;
         g.card_store = crate::rules::card::CardStore::from_cards(&[big, target]);
-        let r = apply_action(&mut g, 0, PlayerAction::BuyVisibleCard { level: CardLevel::Level1, idx: 0 }).unwrap();
-        let cands = match r.outcome { ActionOutcome::NeedChooseNoble { candidates } => candidates, _ => panic!("expected noble choice") };
+        let r = apply_action(
+            &mut g,
+            0,
+            PlayerAction::BuyVisibleCard {
+                level: CardLevel::Level1,
+                idx: 0,
+            },
+        )
+        .unwrap();
+        let cands = match r.outcome {
+            ActionOutcome::NeedChooseNoble { candidates } => candidates,
+            _ => panic!("expected noble choice"),
+        };
         assert_eq!(cands.len(), 2);
         let r2 = resume(&mut g, 0, Resume::ChooseNoble(50)).unwrap();
         assert!(matches!(r2.outcome, ActionOutcome::Complete));
         assert!(g.player(0).nobles.contains(&50));
+    }
+
+    #[test]
+    fn legal_actions_are_unique_and_validate() {
+        let game = game2();
+        let actions = legal_actions(&game, 0);
+        assert!(!actions.is_empty());
+        for (index, action) in actions.iter().enumerate() {
+            assert!(validate_action(&game, 0, action).is_ok(), "{action:?}");
+            assert!(!actions[..index].contains(action), "duplicate {action:?}");
+        }
+    }
+
+    #[test]
+    fn initial_game_lists_token_and_reserve_choices() {
+        let game = game2();
+        let actions = legal_actions(&game, 0);
+        assert!(
+            actions.contains(&PlayerAction::TakeThreeDifferentTokens(vec![
+                GemColor::White,
+                GemColor::Blue,
+                GemColor::Green,
+            ]))
+        );
+        assert!(actions.contains(&PlayerAction::TakeTwoSameTokens(GemColor::Red)));
+        assert!(actions.contains(&PlayerAction::ReserveVisibleCard {
+            level: CardLevel::Level3,
+            idx: 3,
+        }));
+        assert!(actions.contains(&PlayerAction::ReserveDeckCard(CardLevel::Level2)));
+    }
+
+    #[test]
+    fn reserve_actions_emit_the_same_origin_stored_on_player() {
+        let mut game = game2();
+        let result = apply_action(
+            &mut game,
+            0,
+            PlayerAction::ReserveDeckCard(CardLevel::Level2),
+        )
+        .unwrap();
+        let reserved = game.player(0).reserved_cards[0];
+        assert_eq!(reserved.origin, ReserveOrigin::BlindDeck(CardLevel::Level2));
+        assert!(result.events.iter().any(|event| matches!(
+            event,
+            GameEvent::CardReserved {
+                origin: ReserveOrigin::BlindDeck(CardLevel::Level2),
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -594,14 +996,18 @@ mod tests {
                     .take(3)
                     .collect();
                 if colors.len() == 3 {
-                    let r = apply_action(&mut g, pid, PlayerAction::TakeThreeDifferentTokens(colors)).unwrap();
+                    let r =
+                        apply_action(&mut g, pid, PlayerAction::TakeThreeDifferentTokens(colors))
+                            .unwrap();
                     if let ActionOutcome::NeedDiscardTokens { .. } = r.outcome {
                         // 简单弃牌：归还全部金 + 任意直到 10。
                         let over = g.player(pid).token_total() - crate::rules::player::TOKEN_LIMIT;
                         let mut ret = TokenSet::default();
                         let mut to_ret = over;
                         for c in GemColor::NORMAL {
-                            if to_ret == 0 { break; }
+                            if to_ret == 0 {
+                                break;
+                            }
                             let have = g.player(pid).token_count(c);
                             let give = have.min(to_ret);
                             ret.add(c, give);
@@ -611,12 +1017,20 @@ mod tests {
                     }
                 } else {
                     // 无法行动：保留一张牌堆顶（若可）。
-                    if let Ok(_) = apply_action(&mut g, pid, PlayerAction::ReserveDeckCard(crate::rules::card::CardLevel::Level1)) {
+                    if let Ok(_) = apply_action(
+                        &mut g,
+                        pid,
+                        PlayerAction::ReserveDeckCard(crate::rules::card::CardLevel::Level1),
+                    ) {
                         // 若触发弃牌，简单归还金。
                         if g.player(pid).token_total() > crate::rules::player::TOKEN_LIMIT {
-                            let over = g.player(pid).token_total() - crate::rules::player::TOKEN_LIMIT;
+                            let over =
+                                g.player(pid).token_total() - crate::rules::player::TOKEN_LIMIT;
                             let mut ret = TokenSet::default();
-                            ret.set(GemColor::Gold, over.min(g.player(pid).token_count(GemColor::Gold)));
+                            ret.set(
+                                GemColor::Gold,
+                                over.min(g.player(pid).token_count(GemColor::Gold)),
+                            );
                             resume(&mut g, pid, Resume::DiscardTokens(ret)).ok();
                         }
                     } else {
@@ -637,7 +1051,8 @@ mod tests {
             for (idx, card) in visible.iter().enumerate() {
                 let bonus = g.player(pid).bonus(&g.card_store);
                 if can_afford(g.player(pid).tokens, card, bonus).is_ok() {
-                    let r = apply_action(g, pid, PlayerAction::BuyVisibleCard { level, idx }).unwrap();
+                    let r =
+                        apply_action(g, pid, PlayerAction::BuyVisibleCard { level, idx }).unwrap();
                     if let ActionOutcome::NeedChooseNoble { candidates } = r.outcome {
                         resume(g, pid, Resume::ChooseNoble(candidates[0])).unwrap();
                     }

@@ -1,10 +1,15 @@
 use bevy::{
     input_focus::InputFocus,
     prelude::*,
+    render::{
+        RenderPlugin,
+        settings::{Backends, RenderCreation, WgpuSettings},
+    },
     ui::{ColorStop, LinearGradient},
     window::{PrimaryWindow, WindowResolution},
 };
 
+mod ai;
 mod battle;
 mod rules;
 
@@ -23,19 +28,48 @@ const CREAM: Color = Color::srgb(0.95, 0.91, 0.82);
 const MUTED: Color = Color::srgb(0.54, 0.57, 0.64);
 const BORDER: Color = Color::srgba(0.91, 0.68, 0.29, 0.28);
 
+fn default_render_backends() -> Backends {
+    #[cfg(target_os = "windows")]
+    {
+        Backends::DX12
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Backends::all()
+    }
+}
+
+fn render_settings() -> WgpuSettings {
+    WgpuSettings {
+        // Vulkan swapchain acquisition is unstable with some Windows AMD
+        // drivers. DX12 is the native, reliable default; WGPU_BACKEND still
+        // allows an explicit override for diagnostics and other hardware.
+        backends: Some(Backends::from_env().unwrap_or_else(default_render_backends)),
+        ..default()
+    }
+}
+
 fn main() {
     App::new()
         .insert_resource(ClearColor(INK))
         .init_resource::<InputFocus>()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Arcana Table".into(),
-                resolution: WindowResolution::new(1280, 720),
-                resizable: true,
-                ..default()
-            }),
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Arcana Table".into(),
+                        resolution: WindowResolution::new(1280, 720),
+                        resizable: true,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(RenderPlugin {
+                    render_creation: RenderCreation::Automatic(render_settings()),
+                    ..default()
+                }),
+        )
         .init_state::<AppState>()
         .add_plugins(battle::BattlePlugin)
         .add_systems(Startup, |mut commands: Commands| {
@@ -704,5 +738,17 @@ fn responsive_layout(
         content.max_width = px(620);
         visual.display = Display::Flex;
         title.font_size = 56.0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::render::settings::Backends;
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn windows_defaults_to_dx12_rendering() {
+        assert_eq!(default_render_backends(), Backends::DX12);
     }
 }
