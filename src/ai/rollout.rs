@@ -51,7 +51,12 @@ pub fn rollout<R: Rng + ?Sized>(
         let before_player = state.game.current_id();
         let decisions = state.legal_decisions()?;
         if decisions.is_empty() {
-            return Err(AiError::NoLegalDecision);
+            // 非终局但无合法决策（极端牌堆耗尽 + 保留满）：以当前评估值结算，
+            // 不让单次退化 rollout 中止整次搜索。
+            return Ok(RolloutResult {
+                reward: evaluate(&state.game, root),
+                complete_turns,
+            });
         }
         let decision = if rng.random::<f32>() < epsilon {
             decisions[rng.random_range(0..decisions.len())].clone()
@@ -82,6 +87,11 @@ fn decision_weight(state: &SimulationState, decision: &AiDecision) -> f32 {
     }
     let gain = evaluate(&after.game, actor) - before;
     (gain * 4.0).exp().max(0.01)
+}
+
+/// 供 MCTS 扩展阶段复用的权重计算（与 rollout 内部一致）。
+pub fn decision_weight_for(state: &SimulationState, decision: &AiDecision) -> f32 {
+    decision_weight(state, decision)
 }
 
 /// 在 `decisions` 中按累积权重抽一个；权重总和为 0 时退化为均匀随机。

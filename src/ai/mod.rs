@@ -16,11 +16,15 @@
 mod decision;
 mod determinization;
 mod evaluation;
+mod mcts;
 mod observation;
 mod rollout;
 
 pub use decision::{AiDecision, AiError, DecisionContext, DecisionContextKind, SimulationState};
 pub use determinization::{determinize, PrivateKnowledge};
 pub use evaluation::{evaluate, EvaluationWeights};
+pub use mcts::{
+    AiSearchMetrics, AiSearchResult, MctsConfig, RootActionStat, SearchControl, search,
+};
 pub use observation::{AiObservation, InfoSetKey, ObservedPlayer, ObservedReservation};
 pub use rollout::{RolloutResult, fallback_decision, rollout};
