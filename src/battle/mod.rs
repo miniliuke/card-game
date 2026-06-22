@@ -26,6 +26,13 @@ const PLAYER_COUNT: usize = 2;
 
 pub struct BattlePlugin;
 
+mod ai_runtime;
+
+use ai_runtime::{
+    AiRuntime, PlayerControllers, cancel_stale_search, poll_ai_search, start_ai_search,
+    submit_ready_ai_decision,
+};
+
 impl Plugin for BattlePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AnimationCounts>()
@@ -38,6 +45,9 @@ impl Plugin for BattlePlugin {
             .init_resource::<TokenPicker>()
             .init_resource::<DiscardBuffer>()
             .init_resource::<TurnCount>()
+            .init_resource::<BattleRevision>()
+            .insert_resource(PlayerControllers::human_vs_cpu())
+            .insert_resource(AiRuntime::new(match_id_for_now()))
             .add_systems(OnEnter(AppState::Battle), setup_battle)
             .add_systems(OnExit(AppState::Battle), cleanup_battle)
             .add_systems(
@@ -53,6 +63,10 @@ impl Plugin for BattlePlugin {
                     commit_pending_phase,
                     animate_flights,
                     animate_deals,
+                    cancel_stale_search,
+                    start_ai_search,
+                    poll_ai_search,
+                    submit_ready_ai_decision,
                     refresh_battle_ui,
                     refresh_selection_hud,
                     highlight_selected_supply,
@@ -66,6 +80,14 @@ impl Plugin for BattlePlugin {
     }
 }
 
+/// 用当前时间戳作为 match_id，避免跨进程/跨对局复用同一 AI seed 序列。
+fn match_id_for_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
+}
+
 fn input_gate(
     // BattlePhase 是 Battle 态专属资源（setup_battle 插入 / cleanup_battle 移除）。
     // 作为 run condition，其参数会在 in_state(Battle) 短路前被校验；
@@ -74,11 +96,20 @@ fn input_gate(
     phase: Option<Res<BattlePhase>>,
     anim: Res<AnimationCounts>,
     pending: Res<PendingEvents>,
+    model: Option<Res<BattleModel>>,
+    controllers: Res<PlayerControllers>,
 ) -> bool {
     let Some(phase) = phase else {
         return false;
     };
-    can_act(&phase, anim.busy(), &pending)
+    if !can_act(&phase, anim.busy(), &pending) {
+        return false;
+    }
+    // 仅当当前玩家是人类时放行人类输入；CPU 回合由 ai_runtime 接管。
+    let Some(model) = model else {
+        return false;
+    };
+    controllers.is_human(model.0.current_id())
 }
 
 // === 动画组件（复用） ===
@@ -281,6 +312,10 @@ struct PendingEvents(Vec<GameEvent>);
 #[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
 struct TurnCount(u32);
 
+/// 每次规则层成功突变后自增的版本号，供 AI 运行时判定请求是否过期。
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+struct BattleRevision(u64);
+
 #[derive(Resource, Clone, PartialEq, Eq, Debug)]
 enum BattlePhase {
     Idle,
@@ -431,6 +466,9 @@ fn setup_battle(mut commands: Commands) {
     commands.init_resource::<TokenPicker>();
     commands.init_resource::<DiscardBuffer>();
     commands.init_resource::<TurnCount>();
+    commands.insert_resource(BattleRevision::default());
+    // 每局重开时刷新 match_id 与运行时，避免上局残留的 ready/active 干扰。
+    commands.insert_resource(AiRuntime::new(match_id_for_now()));
     commands.insert_resource(FocusCursor::default());
     commands.insert_resource(RuleDecisionQueue::default());
     commands.insert_resource(AnimationCounts::default());
@@ -494,7 +532,10 @@ fn cleanup_battle(
     mut commands: Commands,
     screen: Single<Entity, With<BattleScreen>>,
     mut ui_scale: ResMut<UiScale>,
+    mut runtime: ResMut<AiRuntime>,
 ) {
+    // 取消任何进行中的后台搜索，避免任务回调写入已失效的资源。
+    runtime.cancel_active();
     commands.entity(*screen).despawn();
     commands.remove_resource::<BattleModel>();
     commands.remove_resource::<BattlePhase>();
@@ -504,6 +545,7 @@ fn cleanup_battle(
     commands.remove_resource::<TokenPicker>();
     commands.remove_resource::<DiscardBuffer>();
     commands.remove_resource::<TurnCount>();
+    commands.remove_resource::<BattleRevision>();
     ui_scale.0 = 1.0;
 }
 
@@ -1380,6 +1422,7 @@ fn apply_rule_decisions(
     mut status: Single<&mut Text, With<StatusText>>,
     mut dirty: ResMut<UiDirty>,
     mut turn: ResMut<TurnCount>,
+    mut revision: ResMut<BattleRevision>,
 ) {
     // 防重入
     if pending_phase.0.is_some() || anim.busy() || !pending_events.0.is_empty() {
@@ -1402,6 +1445,8 @@ fn apply_rule_decisions(
                 continue;
             }
         };
+        // 每次成功规则突变都自增版本号，使 AI 请求过期。
+        revision.0 = revision.0.wrapping_add(1);
         // 暂存 candidates 若为 final discard + noble
         if let Some(cands) = final_noble_candidates(&result.outcome) {
             pending_nobles.0 = Some(cands);
@@ -1741,6 +1786,8 @@ fn commit_pending_phase(
     overlays: Query<Entity, With<Overlay>>,
     mut discard_buf: ResMut<DiscardBuffer>,
     pending_nobles: Res<PendingNobleCandidates>,
+    model: Res<BattleModel>,
+    controllers: Res<PlayerControllers>,
 ) {
     if !should_commit_phase(&pending_events, anim.busy(), &phase, &pending_phase) {
         return;
@@ -1753,14 +1800,21 @@ fn commit_pending_phase(
     *phase = new_phase.clone();
     pending_phase.0 = None;
 
+    // 当前玩家是 CPU 时，不弹人类交互覆盖层——AI 运行时会接管该决策。
+    let current_is_cpu = !controllers.is_human(model.0.current_id());
+
     match new_phase {
         BattlePhase::AwaitDiscard { excess } => {
             discard_buf.excess = excess;
             discard_buf.returned = TokenSet::default();
-            spawn_discard_overlay(commands, root, excess);
+            if !current_is_cpu {
+                spawn_discard_overlay(commands, root, excess);
+            }
         }
         BattlePhase::AwaitNobleChoice { candidates } => {
-            spawn_noble_overlay(commands, root, &candidates);
+            if !current_is_cpu {
+                spawn_noble_overlay(commands, root, &candidates);
+            }
         }
         BattlePhase::GameOver { winner, standings } => {
             spawn_gameover_overlay(commands, root, winner, &standings);
