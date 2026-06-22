@@ -97,7 +97,13 @@ mod tests {
     use crate::rules::color::CardColor;
 
     fn card(id: CardId, level: CardLevel) -> DevelopmentCard {
-        DevelopmentCard { id, level, color: CardColor::White, prestige: 0, cost: GemCost::default() }
+        DevelopmentCard {
+            id,
+            level,
+            color: CardColor::White,
+            prestige: 0,
+            cost: GemCost::default(),
+        }
     }
 
     #[test]
@@ -111,8 +117,20 @@ mod tests {
 
     #[test]
     fn refill_pulls_from_deck_until_four() {
-        let mut deck = CardDecks { level1: vec![card(5, CardLevel::Level1), card(6, CardLevel::Level1)], level2: vec![], level3: vec![] };
-        let mut m = Market { level1_visible: vec![card(1, CardLevel::Level1), card(2, CardLevel::Level1), card(3, CardLevel::Level1)], level2_visible: vec![], level3_visible: vec![] };
+        let mut deck = CardDecks {
+            level1: vec![card(5, CardLevel::Level1), card(6, CardLevel::Level1)],
+            level2: vec![],
+            level3: vec![],
+        };
+        let mut m = Market {
+            level1_visible: vec![
+                card(1, CardLevel::Level1),
+                card(2, CardLevel::Level1),
+                card(3, CardLevel::Level1),
+            ],
+            level2_visible: vec![],
+            level3_visible: vec![],
+        };
         // Vec::pop 取尾部为牌堆顶，故补入 id=6。
         let id = m.refill(CardLevel::Level1, &mut deck);
         assert_eq!(id, Some(6));
@@ -121,8 +139,16 @@ mod tests {
 
     #[test]
     fn refill_returns_none_when_deck_empty_and_not_full() {
-        let mut deck = CardDecks { level1: vec![], level2: vec![], level3: vec![] };
-        let mut m = Market { level1_visible: vec![card(1, CardLevel::Level1)], level2_visible: vec![], level3_visible: vec![] };
+        let mut deck = CardDecks {
+            level1: vec![],
+            level2: vec![],
+            level3: vec![],
+        };
+        let mut m = Market {
+            level1_visible: vec![card(1, CardLevel::Level1)],
+            level2_visible: vec![],
+            level3_visible: vec![],
+        };
         assert_eq!(m.refill(CardLevel::Level1, &mut deck), None);
         assert_eq!(m.visible(CardLevel::Level1).len(), 1);
     }

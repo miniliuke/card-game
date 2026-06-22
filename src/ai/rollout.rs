@@ -100,7 +100,10 @@ fn weighted_choice<R: Rng + ?Sized>(
     decisions: &[AiDecision],
     rng: &mut R,
 ) -> AiDecision {
-    let weights: Vec<f32> = decisions.iter().map(|d| decision_weight(state, d)).collect();
+    let weights: Vec<f32> = decisions
+        .iter()
+        .map(|d| decision_weight(state, d))
+        .collect();
     let total: f32 = weights.iter().copied().sum();
     if total <= 0.0 {
         return decisions[rng.random_range(0..decisions.len())].clone();
@@ -127,9 +130,7 @@ fn choose_best_by_weight(
         let key = format!("{decision:?}");
         let is_better = match &best {
             None => true,
-            Some((bw, bk, _)) => {
-                (weight > *bw) || (weight == *bw && key < *bk)
-            }
+            Some((bw, bk, _)) => (weight > *bw) || (weight == *bw && key < *bk),
         };
         if is_better {
             best = Some((weight, key, decision.clone()));

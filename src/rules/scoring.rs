@@ -63,10 +63,29 @@ mod tests {
     use crate::rules::player::PlayerState;
 
     fn stores() -> (CardStore, NobleStore) {
-        let c = DevelopmentCard { id: 1, level: crate::rules::card::CardLevel::Level1, color: CardColor::White, prestige: 2, cost: GemCost::default() };
-        let zero = DevelopmentCard { id: 2, level: crate::rules::card::CardLevel::Level1, color: CardColor::Blue, prestige: 0, cost: GemCost::default() };
-        let n = Noble { id: 0, prestige: 3, requirement: GemCost::default() };
-        (CardStore::from_cards(&[c, zero]), NobleStore::from_nobles(&[n]))
+        let c = DevelopmentCard {
+            id: 1,
+            level: crate::rules::card::CardLevel::Level1,
+            color: CardColor::White,
+            prestige: 2,
+            cost: GemCost::default(),
+        };
+        let zero = DevelopmentCard {
+            id: 2,
+            level: crate::rules::card::CardLevel::Level1,
+            color: CardColor::Blue,
+            prestige: 0,
+            cost: GemCost::default(),
+        };
+        let n = Noble {
+            id: 0,
+            prestige: 3,
+            requirement: GemCost::default(),
+        };
+        (
+            CardStore::from_cards(&[c, zero]),
+            NobleStore::from_nobles(&[n]),
+        )
     }
 
     #[test]

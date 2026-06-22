@@ -60,7 +60,13 @@ pub fn standard_nobles() -> Vec<Noble> {
     let mk = |id: NobleId, req: [u8; 5]| Noble {
         id,
         prestige: 3,
-        requirement: GemCost { white: req[0], blue: req[1], green: req[2], red: req[3], black: req[4] },
+        requirement: GemCost {
+            white: req[0],
+            blue: req[1],
+            green: req[2],
+            red: req[3],
+            black: req[4],
+        },
     };
     vec![
         mk(0, [4, 4, 0, 0, 0]),
@@ -93,7 +99,10 @@ mod tests {
 
     #[test]
     fn board_take_moves_to_taken() {
-        let mut board = NobleBoard { available: standard_nobles(), taken: vec![] };
+        let mut board = NobleBoard {
+            available: standard_nobles(),
+            taken: vec![],
+        };
         let taken = board.take(0).unwrap();
         assert_eq!(taken.id, 0);
         assert!(board.available.iter().all(|n| n.id != 0));
@@ -102,8 +111,15 @@ mod tests {
 
     #[test]
     fn eligible_filters_by_bonus() {
-        let board = NobleBoard { available: standard_nobles(), taken: vec![] };
-        let bonus = CardBonus { white: 4, blue: 4, ..Default::default() };
+        let board = NobleBoard {
+            available: standard_nobles(),
+            taken: vec![],
+        };
+        let bonus = CardBonus {
+            white: 4,
+            blue: 4,
+            ..Default::default()
+        };
         let elig = board.eligible(bonus);
         assert!(elig.contains(&0)); // 4W 4B
         assert!(!elig.contains(&2));

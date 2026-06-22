@@ -21,8 +21,8 @@ mod observation;
 mod rollout;
 
 pub use decision::{AiDecision, AiError, DecisionContext, DecisionContextKind, SimulationState};
-pub use determinization::{determinize, PrivateKnowledge};
-pub use evaluation::{evaluate, EvaluationWeights};
+pub use determinization::{PrivateKnowledge, determinize};
+pub use evaluation::{EvaluationWeights, evaluate};
 pub use mcts::{
     AiSearchMetrics, AiSearchResult, MctsConfig, RootActionStat, SearchControl, search,
 };

@@ -127,17 +127,24 @@ impl CardStore {
 /// 注意：数值由作者凭记忆录入，可能存在偏差；统计特征由测试锁定。
 pub fn standard_deck() -> Vec<DevelopmentCard> {
     let mut id = 0u32;
-    let mut mk = |level: CardLevel, color: CardColor, prestige: u8, cost: [u8; 5]| -> DevelopmentCard {
-        let card = DevelopmentCard {
-            id,
-            level,
-            color,
-            prestige,
-            cost: GemCost { white: cost[0], blue: cost[1], green: cost[2], red: cost[3], black: cost[4] },
+    let mut mk =
+        |level: CardLevel, color: CardColor, prestige: u8, cost: [u8; 5]| -> DevelopmentCard {
+            let card = DevelopmentCard {
+                id,
+                level,
+                color,
+                prestige,
+                cost: GemCost {
+                    white: cost[0],
+                    blue: cost[1],
+                    green: cost[2],
+                    red: cost[3],
+                    black: cost[4],
+                },
+            };
+            id += 1;
+            card
         };
-        id += 1;
-        card
-    };
     let l1 = CardLevel::Level1;
     let l2 = CardLevel::Level2;
     let l3 = CardLevel::Level3;
@@ -145,114 +152,112 @@ pub fn standard_deck() -> Vec<DevelopmentCard> {
     let cards = vec![
         // ===== Level 1 (40 张) =====
         // White bonus (8)
-        mk(l1, CardColor::White, 0, [0,1,2,1,0]),
-        mk(l1, CardColor::White, 0, [0,2,0,1,1]),
-        mk(l1, CardColor::White, 0, [0,1,1,0,2]),
-        mk(l1, CardColor::White, 0, [0,0,2,2,0]),
-        mk(l1, CardColor::White, 0, [0,2,1,0,1]),
-        mk(l1, CardColor::White, 0, [0,0,1,2,1]),
-        mk(l1, CardColor::White, 0, [0,1,0,1,2]),
-        mk(l1, CardColor::White, 1, [0,3,0,0,0]),
+        mk(l1, CardColor::White, 0, [0, 1, 2, 1, 0]),
+        mk(l1, CardColor::White, 0, [0, 2, 0, 1, 1]),
+        mk(l1, CardColor::White, 0, [0, 1, 1, 0, 2]),
+        mk(l1, CardColor::White, 0, [0, 0, 2, 2, 0]),
+        mk(l1, CardColor::White, 0, [0, 2, 1, 0, 1]),
+        mk(l1, CardColor::White, 0, [0, 0, 1, 2, 1]),
+        mk(l1, CardColor::White, 0, [0, 1, 0, 1, 2]),
+        mk(l1, CardColor::White, 1, [0, 3, 0, 0, 0]),
         // Blue bonus (8)
-        mk(l1, CardColor::Blue, 0, [1,0,2,1,0]),
-        mk(l1, CardColor::Blue, 0, [2,0,0,1,1]),
-        mk(l1, CardColor::Blue, 0, [1,0,1,0,2]),
-        mk(l1, CardColor::Blue, 0, [2,0,2,0,0]),
-        mk(l1, CardColor::Blue, 0, [1,0,2,1,0]),
-        mk(l1, CardColor::Blue, 0, [0,0,1,2,1]),
-        mk(l1, CardColor::Blue, 0, [2,0,0,1,1]),
-        mk(l1, CardColor::Blue, 1, [3,0,0,0,0]),
+        mk(l1, CardColor::Blue, 0, [1, 0, 2, 1, 0]),
+        mk(l1, CardColor::Blue, 0, [2, 0, 0, 1, 1]),
+        mk(l1, CardColor::Blue, 0, [1, 0, 1, 0, 2]),
+        mk(l1, CardColor::Blue, 0, [2, 0, 2, 0, 0]),
+        mk(l1, CardColor::Blue, 0, [1, 0, 2, 1, 0]),
+        mk(l1, CardColor::Blue, 0, [0, 0, 1, 2, 1]),
+        mk(l1, CardColor::Blue, 0, [2, 0, 0, 1, 1]),
+        mk(l1, CardColor::Blue, 1, [3, 0, 0, 0, 0]),
         // Green bonus (8)
-        mk(l1, CardColor::Green, 0, [2,1,0,0,1]),
-        mk(l1, CardColor::Green, 0, [0,2,0,1,1]),
-        mk(l1, CardColor::Green, 0, [1,1,0,2,0]),
-        mk(l1, CardColor::Green, 0, [2,0,0,0,2]),
-        mk(l1, CardColor::Green, 0, [1,2,0,1,0]),
-        mk(l1, CardColor::Green, 0, [0,1,0,2,1]),
-        mk(l1, CardColor::Green, 0, [1,0,0,1,2]),
-        mk(l1, CardColor::Green, 1, [0,0,0,3,0]),
+        mk(l1, CardColor::Green, 0, [2, 1, 0, 0, 1]),
+        mk(l1, CardColor::Green, 0, [0, 2, 0, 1, 1]),
+        mk(l1, CardColor::Green, 0, [1, 1, 0, 2, 0]),
+        mk(l1, CardColor::Green, 0, [2, 0, 0, 0, 2]),
+        mk(l1, CardColor::Green, 0, [1, 2, 0, 1, 0]),
+        mk(l1, CardColor::Green, 0, [0, 1, 0, 2, 1]),
+        mk(l1, CardColor::Green, 0, [1, 0, 0, 1, 2]),
+        mk(l1, CardColor::Green, 1, [0, 0, 0, 3, 0]),
         // Red bonus (8)
-        mk(l1, CardColor::Red, 0, [1,2,1,0,0]),
-        mk(l1, CardColor::Red, 0, [2,1,0,0,1]),
-        mk(l1, CardColor::Red, 0, [0,1,2,0,1]),
-        mk(l1, CardColor::Red, 0, [1,0,1,0,2]),
-        mk(l1, CardColor::Red, 0, [2,0,0,0,2]),
-        mk(l1, CardColor::Red, 0, [0,2,1,0,1]),
-        mk(l1, CardColor::Red, 0, [1,1,0,0,2]),
-        mk(l1, CardColor::Red, 1, [0,0,3,0,0]),
+        mk(l1, CardColor::Red, 0, [1, 2, 1, 0, 0]),
+        mk(l1, CardColor::Red, 0, [2, 1, 0, 0, 1]),
+        mk(l1, CardColor::Red, 0, [0, 1, 2, 0, 1]),
+        mk(l1, CardColor::Red, 0, [1, 0, 1, 0, 2]),
+        mk(l1, CardColor::Red, 0, [2, 0, 0, 0, 2]),
+        mk(l1, CardColor::Red, 0, [0, 2, 1, 0, 1]),
+        mk(l1, CardColor::Red, 0, [1, 1, 0, 0, 2]),
+        mk(l1, CardColor::Red, 1, [0, 0, 3, 0, 0]),
         // Black bonus (8)
-        mk(l1, CardColor::Black, 0, [1,0,1,2,0]),
-        mk(l1, CardColor::Black, 0, [0,1,2,1,0]),
-        mk(l1, CardColor::Black, 0, [2,1,0,1,0]),
-        mk(l1, CardColor::Black, 0, [0,2,0,2,0]),
-        mk(l1, CardColor::Black, 0, [1,0,2,1,0]),
-        mk(l1, CardColor::Black, 0, [0,1,0,3,0]),
-        mk(l1, CardColor::Black, 0, [2,0,1,1,0]),
-        mk(l1, CardColor::Black, 1, [3,0,0,0,0]),
-
+        mk(l1, CardColor::Black, 0, [1, 0, 1, 2, 0]),
+        mk(l1, CardColor::Black, 0, [0, 1, 2, 1, 0]),
+        mk(l1, CardColor::Black, 0, [2, 1, 0, 1, 0]),
+        mk(l1, CardColor::Black, 0, [0, 2, 0, 2, 0]),
+        mk(l1, CardColor::Black, 0, [1, 0, 2, 1, 0]),
+        mk(l1, CardColor::Black, 0, [0, 1, 0, 3, 0]),
+        mk(l1, CardColor::Black, 0, [2, 0, 1, 1, 0]),
+        mk(l1, CardColor::Black, 1, [3, 0, 0, 0, 0]),
         // ===== Level 2 (30 张) =====
         // White bonus (6)
-        mk(l2, CardColor::White, 1, [0,2,2,0,3]),
-        mk(l2, CardColor::White, 1, [0,3,0,3,2]),
-        mk(l2, CardColor::White, 1, [0,0,3,2,3]),
-        mk(l2, CardColor::White, 2, [0,5,0,0,0]),
-        mk(l2, CardColor::White, 2, [0,0,5,0,0]),
-        mk(l2, CardColor::White, 2, [0,0,0,5,0]),
+        mk(l2, CardColor::White, 1, [0, 2, 2, 0, 3]),
+        mk(l2, CardColor::White, 1, [0, 3, 0, 3, 2]),
+        mk(l2, CardColor::White, 1, [0, 0, 3, 2, 3]),
+        mk(l2, CardColor::White, 2, [0, 5, 0, 0, 0]),
+        mk(l2, CardColor::White, 2, [0, 0, 5, 0, 0]),
+        mk(l2, CardColor::White, 2, [0, 0, 0, 5, 0]),
         // Blue bonus (6)
-        mk(l2, CardColor::Blue, 1, [2,0,2,3,0]),
-        mk(l2, CardColor::Blue, 1, [3,0,3,0,2]),
-        mk(l2, CardColor::Blue, 1, [0,0,2,3,3]),
-        mk(l2, CardColor::Blue, 2, [5,0,0,0,0]),
-        mk(l2, CardColor::Blue, 2, [0,0,5,0,0]),
-        mk(l2, CardColor::Blue, 2, [0,0,0,0,5]),
+        mk(l2, CardColor::Blue, 1, [2, 0, 2, 3, 0]),
+        mk(l2, CardColor::Blue, 1, [3, 0, 3, 0, 2]),
+        mk(l2, CardColor::Blue, 1, [0, 0, 2, 3, 3]),
+        mk(l2, CardColor::Blue, 2, [5, 0, 0, 0, 0]),
+        mk(l2, CardColor::Blue, 2, [0, 0, 5, 0, 0]),
+        mk(l2, CardColor::Blue, 2, [0, 0, 0, 0, 5]),
         // Green bonus (6)
-        mk(l2, CardColor::Green, 1, [2,3,0,0,2]),
-        mk(l2, CardColor::Green, 1, [3,2,0,3,0]),
-        mk(l2, CardColor::Green, 1, [2,0,0,3,3]),
-        mk(l2, CardColor::Green, 2, [0,5,0,0,0]),
-        mk(l2, CardColor::Green, 2, [5,0,0,0,0]),
-        mk(l2, CardColor::Green, 2, [0,0,0,0,5]),
+        mk(l2, CardColor::Green, 1, [2, 3, 0, 0, 2]),
+        mk(l2, CardColor::Green, 1, [3, 2, 0, 3, 0]),
+        mk(l2, CardColor::Green, 1, [2, 0, 0, 3, 3]),
+        mk(l2, CardColor::Green, 2, [0, 5, 0, 0, 0]),
+        mk(l2, CardColor::Green, 2, [5, 0, 0, 0, 0]),
+        mk(l2, CardColor::Green, 2, [0, 0, 0, 0, 5]),
         // Red bonus (6)
-        mk(l2, CardColor::Red, 1, [3,0,2,0,2]),
-        mk(l2, CardColor::Red, 1, [0,3,3,0,2]),
-        mk(l2, CardColor::Red, 1, [2,2,0,0,3]),
-        mk(l2, CardColor::Red, 2, [0,0,5,0,0]),
-        mk(l2, CardColor::Red, 2, [0,5,0,0,0]),
-        mk(l2, CardColor::Red, 2, [5,0,0,0,0]),
+        mk(l2, CardColor::Red, 1, [3, 0, 2, 0, 2]),
+        mk(l2, CardColor::Red, 1, [0, 3, 3, 0, 2]),
+        mk(l2, CardColor::Red, 1, [2, 2, 0, 0, 3]),
+        mk(l2, CardColor::Red, 2, [0, 0, 5, 0, 0]),
+        mk(l2, CardColor::Red, 2, [0, 5, 0, 0, 0]),
+        mk(l2, CardColor::Red, 2, [5, 0, 0, 0, 0]),
         // Black bonus (6)
-        mk(l2, CardColor::Black, 1, [0,2,3,2,0]),
-        mk(l2, CardColor::Black, 1, [2,0,3,3,0]),
-        mk(l2, CardColor::Black, 1, [3,2,2,0,0]),
-        mk(l2, CardColor::Black, 2, [0,0,0,5,0]),
-        mk(l2, CardColor::Black, 2, [0,5,0,0,0]),
-        mk(l2, CardColor::Black, 2, [0,0,5,0,0]),
-
+        mk(l2, CardColor::Black, 1, [0, 2, 3, 2, 0]),
+        mk(l2, CardColor::Black, 1, [2, 0, 3, 3, 0]),
+        mk(l2, CardColor::Black, 1, [3, 2, 2, 0, 0]),
+        mk(l2, CardColor::Black, 2, [0, 0, 0, 5, 0]),
+        mk(l2, CardColor::Black, 2, [0, 5, 0, 0, 0]),
+        mk(l2, CardColor::Black, 2, [0, 0, 5, 0, 0]),
         // ===== Level 3 (20 张) =====
         // White bonus (4)
-        mk(l3, CardColor::White, 3, [0,3,3,5,3]),
-        mk(l3, CardColor::White, 4, [0,0,0,6,4]),
-        mk(l3, CardColor::White, 4, [0,5,5,0,3]),
-        mk(l3, CardColor::White, 5, [0,0,0,7,0]),
+        mk(l3, CardColor::White, 3, [0, 3, 3, 5, 3]),
+        mk(l3, CardColor::White, 4, [0, 0, 0, 6, 4]),
+        mk(l3, CardColor::White, 4, [0, 5, 5, 0, 3]),
+        mk(l3, CardColor::White, 5, [0, 0, 0, 7, 0]),
         // Blue bonus (4)
-        mk(l3, CardColor::Blue, 3, [5,0,3,3,3]),
-        mk(l3, CardColor::Blue, 4, [4,0,0,0,6]),
-        mk(l3, CardColor::Blue, 4, [3,0,5,5,0]),
-        mk(l3, CardColor::Blue, 5, [0,0,0,0,7]),
+        mk(l3, CardColor::Blue, 3, [5, 0, 3, 3, 3]),
+        mk(l3, CardColor::Blue, 4, [4, 0, 0, 0, 6]),
+        mk(l3, CardColor::Blue, 4, [3, 0, 5, 5, 0]),
+        mk(l3, CardColor::Blue, 5, [0, 0, 0, 0, 7]),
         // Green bonus (4)
-        mk(l3, CardColor::Green, 3, [3,5,0,3,3]),
-        mk(l3, CardColor::Green, 4, [6,4,0,0,0]),
-        mk(l3, CardColor::Green, 4, [0,3,0,5,5]),
-        mk(l3, CardColor::Green, 5, [7,0,0,0,0]),
+        mk(l3, CardColor::Green, 3, [3, 5, 0, 3, 3]),
+        mk(l3, CardColor::Green, 4, [6, 4, 0, 0, 0]),
+        mk(l3, CardColor::Green, 4, [0, 3, 0, 5, 5]),
+        mk(l3, CardColor::Green, 5, [7, 0, 0, 0, 0]),
         // Red bonus (4)
-        mk(l3, CardColor::Red, 3, [3,3,5,0,3]),
-        mk(l3, CardColor::Red, 4, [0,6,4,0,0]),
-        mk(l3, CardColor::Red, 4, [5,0,3,0,5]),
-        mk(l3, CardColor::Red, 5, [0,7,0,0,0]),
+        mk(l3, CardColor::Red, 3, [3, 3, 5, 0, 3]),
+        mk(l3, CardColor::Red, 4, [0, 6, 4, 0, 0]),
+        mk(l3, CardColor::Red, 4, [5, 0, 3, 0, 5]),
+        mk(l3, CardColor::Red, 5, [0, 7, 0, 0, 0]),
         // Black bonus (4)
-        mk(l3, CardColor::Black, 3, [3,3,3,5,0]),
-        mk(l3, CardColor::Black, 4, [0,0,6,4,0]),
-        mk(l3, CardColor::Black, 4, [5,5,0,3,0]),
-        mk(l3, CardColor::Black, 5, [0,0,0,7,0]),
+        mk(l3, CardColor::Black, 3, [3, 3, 3, 5, 0]),
+        mk(l3, CardColor::Black, 4, [0, 0, 6, 4, 0]),
+        mk(l3, CardColor::Black, 4, [5, 5, 0, 3, 0]),
+        mk(l3, CardColor::Black, 5, [0, 0, 0, 7, 0]),
     ];
     cards
 }
@@ -265,9 +270,18 @@ mod tests {
     fn standard_deck_has_40_30_20() {
         let deck = standard_deck();
         assert_eq!(deck.len(), 90);
-        assert_eq!(deck.iter().filter(|c| c.level == CardLevel::Level1).count(), 40);
-        assert_eq!(deck.iter().filter(|c| c.level == CardLevel::Level2).count(), 30);
-        assert_eq!(deck.iter().filter(|c| c.level == CardLevel::Level3).count(), 20);
+        assert_eq!(
+            deck.iter().filter(|c| c.level == CardLevel::Level1).count(),
+            40
+        );
+        assert_eq!(
+            deck.iter().filter(|c| c.level == CardLevel::Level2).count(),
+            30
+        );
+        assert_eq!(
+            deck.iter().filter(|c| c.level == CardLevel::Level3).count(),
+            20
+        );
     }
 
     #[test]
@@ -275,7 +289,10 @@ mod tests {
         let deck = standard_deck();
         for level in CardLevel::ALL {
             for color in CardColor::ALL {
-                let count = deck.iter().filter(|c| c.level == level && c.color == color).count();
+                let count = deck
+                    .iter()
+                    .filter(|c| c.level == level && c.color == color)
+                    .count();
                 let expected = match level {
                     CardLevel::Level1 => 8,
                     CardLevel::Level2 => 6,
@@ -289,7 +306,12 @@ mod tests {
     #[test]
     fn bonus_color_cost_is_zero() {
         for card in standard_deck() {
-            assert_eq!(card.cost.get(card.color), 0, "card {} bonus color cost nonzero", card.id);
+            assert_eq!(
+                card.cost.get(card.color),
+                0,
+                "card {} bonus color cost nonzero",
+                card.id
+            );
         }
     }
 
@@ -304,8 +326,16 @@ mod tests {
 
     #[test]
     fn after_discount_floors_at_zero() {
-        let cost = GemCost { white: 3, blue: 2, ..Default::default() };
-        let bonus = CardBonus { white: 1, blue: 3, ..Default::default() };
+        let cost = GemCost {
+            white: 3,
+            blue: 2,
+            ..Default::default()
+        };
+        let bonus = CardBonus {
+            white: 1,
+            blue: 3,
+            ..Default::default()
+        };
         let after = cost.after_discount(bonus);
         assert_eq!(after.white, 2);
         assert_eq!(after.blue, 0);
@@ -313,10 +343,22 @@ mod tests {
 
     #[test]
     fn bonus_satisfies_requirement() {
-        let bonus = CardBonus { white: 4, blue: 4, ..Default::default() };
-        let req = GemCost { white: 4, blue: 4, ..Default::default() };
+        let bonus = CardBonus {
+            white: 4,
+            blue: 4,
+            ..Default::default()
+        };
+        let req = GemCost {
+            white: 4,
+            blue: 4,
+            ..Default::default()
+        };
         assert!(bonus.satisfies(req));
-        let req2 = GemCost { white: 4, blue: 5, ..Default::default() };
+        let req2 = GemCost {
+            white: 4,
+            blue: 5,
+            ..Default::default()
+        };
         assert!(!bonus.satisfies(req2));
     }
 }

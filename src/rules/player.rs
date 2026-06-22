@@ -117,7 +117,13 @@ mod tests {
 
     #[test]
     fn bonus_counts_purchased_by_color() {
-        let c = DevelopmentCard { id: 1, level: crate::rules::card::CardLevel::Level1, color: CardColor::White, prestige: 1, cost: GemCost::default() };
+        let c = DevelopmentCard {
+            id: 1,
+            level: crate::rules::card::CardLevel::Level1,
+            color: CardColor::White,
+            prestige: 1,
+            cost: GemCost::default(),
+        };
         let store = store_with(&[c]);
         let mut p = PlayerState::new(0);
         p.purchased_cards.push(1);
@@ -129,8 +135,18 @@ mod tests {
 
     #[test]
     fn score_sums_cards_and_nobles() {
-        let c = DevelopmentCard { id: 1, level: crate::rules::card::CardLevel::Level1, color: CardColor::White, prestige: 2, cost: GemCost::default() };
-        let n = Noble { id: 0, prestige: 3, requirement: GemCost::default() };
+        let c = DevelopmentCard {
+            id: 1,
+            level: crate::rules::card::CardLevel::Level1,
+            color: CardColor::White,
+            prestige: 2,
+            cost: GemCost::default(),
+        };
+        let n = Noble {
+            id: 0,
+            prestige: 3,
+            requirement: GemCost::default(),
+        };
         let store = store_with(&[c]);
         let nstore = NobleStore::from_nobles(&[n]);
         let mut p = PlayerState::new(0);

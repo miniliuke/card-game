@@ -4,11 +4,11 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
-use crate::rules::card::{standard_deck, CardStore};
+use crate::rules::card::{CardStore, standard_deck};
 use crate::rules::color::PlayerId;
 use crate::rules::error::RuleError;
 use crate::rules::market::{CardDecks, Market};
-use crate::rules::noble::{standard_nobles, NobleBoard, NobleStore};
+use crate::rules::noble::{NobleBoard, NobleStore, standard_nobles};
 use crate::rules::player::{PlayerState, TOKEN_LIMIT, WIN_SCORE};
 use crate::rules::token::{Bank, TokenSet};
 
@@ -41,14 +41,30 @@ impl GameState {
         let deck = standard_deck();
         let card_store = CardStore::from_cards(&deck);
 
-        let mut l1: Vec<_> = deck.iter().filter(|c| matches!(c.level, crate::rules::card::CardLevel::Level1)).copied().collect();
-        let mut l2: Vec<_> = deck.iter().filter(|c| matches!(c.level, crate::rules::card::CardLevel::Level2)).copied().collect();
-        let mut l3: Vec<_> = deck.iter().filter(|c| matches!(c.level, crate::rules::card::CardLevel::Level3)).copied().collect();
+        let mut l1: Vec<_> = deck
+            .iter()
+            .filter(|c| matches!(c.level, crate::rules::card::CardLevel::Level1))
+            .copied()
+            .collect();
+        let mut l2: Vec<_> = deck
+            .iter()
+            .filter(|c| matches!(c.level, crate::rules::card::CardLevel::Level2))
+            .copied()
+            .collect();
+        let mut l3: Vec<_> = deck
+            .iter()
+            .filter(|c| matches!(c.level, crate::rules::card::CardLevel::Level3))
+            .copied()
+            .collect();
         l1.shuffle(rng);
         l2.shuffle(rng);
         l3.shuffle(rng);
 
-        let mut decks = CardDecks { level1: l1, level2: l2, level3: l3 };
+        let mut decks = CardDecks {
+            level1: l1,
+            level2: l2,
+            level3: l3,
+        };
         let mut market = Market::default();
         for level in crate::rules::card::CardLevel::ALL {
             for _ in 0..VISIBLE_PER_LEVEL {
@@ -62,7 +78,10 @@ impl GameState {
         nobles_pool.shuffle(rng);
         let noble_count = player_count + 1;
         let available = nobles_pool.into_iter().take(noble_count).collect();
-        let nobles = NobleBoard { available, taken: vec![] };
+        let nobles = NobleBoard {
+            available,
+            taken: vec![],
+        };
         let noble_store = NobleStore::from_nobles(&standard_nobles());
 
         let normal_per_color = match player_count {
@@ -150,8 +169,14 @@ mod tests {
 
     #[test]
     fn rejects_invalid_player_count() {
-        assert_eq!(GameState::new_seeded(1, 1).unwrap_err(), RuleError::InvalidPlayerCount);
-        assert_eq!(GameState::new_seeded(5, 1).unwrap_err(), RuleError::InvalidPlayerCount);
+        assert_eq!(
+            GameState::new_seeded(1, 1).unwrap_err(),
+            RuleError::InvalidPlayerCount
+        );
+        assert_eq!(
+            GameState::new_seeded(5, 1).unwrap_err(),
+            RuleError::InvalidPlayerCount
+        );
     }
 
     #[test]
@@ -180,8 +205,17 @@ mod tests {
     #[test]
     fn deck_remaining_plus_visible_equals_total() {
         let g = GameState::new_seeded(2, 1).unwrap();
-        assert_eq!(g.decks.remaining(CardLevel::Level1) + g.market.visible(CardLevel::Level1).len(), 40);
-        assert_eq!(g.decks.remaining(CardLevel::Level2) + g.market.visible(CardLevel::Level2).len(), 30);
-        assert_eq!(g.decks.remaining(CardLevel::Level3) + g.market.visible(CardLevel::Level3).len(), 20);
+        assert_eq!(
+            g.decks.remaining(CardLevel::Level1) + g.market.visible(CardLevel::Level1).len(),
+            40
+        );
+        assert_eq!(
+            g.decks.remaining(CardLevel::Level2) + g.market.visible(CardLevel::Level2).len(),
+            30
+        );
+        assert_eq!(
+            g.decks.remaining(CardLevel::Level3) + g.market.visible(CardLevel::Level3).len(),
+            20
+        );
     }
 }

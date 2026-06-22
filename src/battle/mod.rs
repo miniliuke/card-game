@@ -10,7 +10,7 @@ use bevy::{
     window::PrimaryWindow,
 };
 
-use crate::{rules::*, AppState};
+use crate::{AppState, rules::*};
 
 // === 常量与调色板 ===
 const INK: Color = Color::srgb(0.028, 0.033, 0.047);
@@ -154,9 +154,7 @@ impl BattleAction {
                 PlayerAction::ReserveVisibleCard { level, idx }
             }
             Self::ReserveDeckCard(level) => PlayerAction::ReserveDeckCard(level),
-            Self::BuyVisibleCard { level, idx } => {
-                PlayerAction::BuyVisibleCard { level, idx }
-            }
+            Self::BuyVisibleCard { level, idx } => PlayerAction::BuyVisibleCard { level, idx },
             Self::BuyReservedCard(i) => PlayerAction::BuyReservedCard(i),
         }
     }
@@ -319,9 +317,16 @@ struct BattleRevision(u64);
 #[derive(Resource, Clone, PartialEq, Eq, Debug)]
 enum BattlePhase {
     Idle,
-    AwaitDiscard { excess: u8 },
-    AwaitNobleChoice { candidates: Vec<NobleId> },
-    GameOver { winner: PlayerId, standings: Vec<(PlayerId, u16)> },
+    AwaitDiscard {
+        excess: u8,
+    },
+    AwaitNobleChoice {
+        candidates: Vec<NobleId>,
+    },
+    GameOver {
+        winner: PlayerId,
+        standings: Vec<(PlayerId, u16)>,
+    },
 }
 
 impl Default for BattlePhase {
@@ -391,7 +396,10 @@ enum FocusZone {
 
 impl Default for FocusZone {
     fn default() -> Self {
-        Self::Market { level: CardLevel::Level1, slot: 0 }
+        Self::Market {
+            level: CardLevel::Level1,
+            slot: 0,
+        }
     }
 }
 
@@ -417,9 +425,7 @@ fn can_act(phase: &BattlePhase, busy: bool, pending: &PendingEvents) -> bool {
 fn route_outcome(outcome: ActionOutcome) -> Option<BattlePhase> {
     match outcome {
         ActionOutcome::Complete => None,
-        ActionOutcome::NeedDiscardTokens { excess } => {
-            Some(BattlePhase::AwaitDiscard { excess })
-        }
+        ActionOutcome::NeedDiscardTokens { excess } => Some(BattlePhase::AwaitDiscard { excess }),
         ActionOutcome::NeedChooseNoble { candidates } => {
             Some(BattlePhase::AwaitNobleChoice { candidates })
         }
@@ -437,9 +443,10 @@ fn outcome_to_pending(outcome: ActionOutcome) -> Option<BattlePhase> {
 /// 若 events 含 GameOver，返回对应 BattlePhase。
 fn game_over_phase(events: &[GameEvent]) -> Option<BattlePhase> {
     events.iter().find_map(|e| match e {
-        GameEvent::GameOver { winner, standings } => {
-            Some(BattlePhase::GameOver { winner: *winner, standings: standings.clone() })
-        }
+        GameEvent::GameOver { winner, standings } => Some(BattlePhase::GameOver {
+            winner: *winner,
+            standings: standings.clone(),
+        }),
         _ => None,
     })
 }
@@ -465,11 +472,7 @@ fn reservation_face_visible(viewer: PlayerId, owner: PlayerId, reserved: Reserve
 
 /// 玩家角色标签：0 号是"YOU"，其余是"CPU"。
 fn player_label(player: PlayerId) -> &'static str {
-    if player == HUMAN_PLAYER {
-        "YOU"
-    } else {
-        "CPU"
-    }
+    if player == HUMAN_PLAYER { "YOU" } else { "CPU" }
 }
 
 fn setup_battle(mut commands: Commands) {
@@ -605,12 +608,18 @@ fn spawn_player_panel(parent: &mut ChildSpawnerCommands, player: PlayerId) {
                 .with_children(|header| {
                     header.spawn((
                         Text::new(format!("{} (P{})", player_label(player), player + 1)),
-                        TextFont { font_size: 15.0, ..default() },
+                        TextFont {
+                            font_size: 15.0,
+                            ..default()
+                        },
                         TextColor(CREAM),
                     ));
                     header.spawn((
                         Text::new("0 PTS"),
-                        TextFont { font_size: 11.0, ..default() },
+                        TextFont {
+                            font_size: 11.0,
+                            ..default()
+                        },
                         TextColor(GOLD),
                         PlayerScoreText(player),
                     ));
@@ -618,7 +627,10 @@ fn spawn_player_panel(parent: &mut ChildSpawnerCommands, player: PlayerId) {
             // State line
             panel.spawn((
                 Text::new("WAITING"),
-                TextFont { font_size: 9.0, ..default() },
+                TextFont {
+                    font_size: 9.0,
+                    ..default()
+                },
                 TextColor(MUTED),
                 PlayerStateText(player),
             ));
@@ -630,26 +642,48 @@ fn spawn_player_panel(parent: &mut ChildSpawnerCommands, player: PlayerId) {
             spawn_player_gold_row(panel, player);
             // Reserved row container
             panel
-                .spawn((Node { width: percent(100), row_gap: px(4), ..default() }, ReservedRow(player)))
+                .spawn((
+                    Node {
+                        width: percent(100),
+                        row_gap: px(4),
+                        ..default()
+                    },
+                    ReservedRow(player),
+                ))
                 .with_children(|row| {
                     row.spawn((
                         Text::new("RESERVED (0/3)"),
-                        TextFont { font_size: 8.0, ..default() },
+                        TextFont {
+                            font_size: 8.0,
+                            ..default()
+                        },
                         TextColor(MUTED.with_alpha(0.7)),
                     ));
                 });
             // Nobles row container
             panel
-                .spawn((Node { width: percent(100), ..default() }, NoblesRow(player)))
+                .spawn((
+                    Node {
+                        width: percent(100),
+                        ..default()
+                    },
+                    NoblesRow(player),
+                ))
                 .with_children(|row| {
                     row.spawn((
                         Text::new("NOBLES"),
-                        TextFont { font_size: 8.0, ..default() },
+                        TextFont {
+                            font_size: 8.0,
+                            ..default()
+                        },
                         TextColor(MUTED.with_alpha(0.7)),
                     ));
                 });
             // Filler
-            panel.spawn(Node { flex_grow: 1.0, ..default() });
+            panel.spawn(Node {
+                flex_grow: 1.0,
+                ..default()
+            });
         });
 }
 
@@ -672,12 +706,18 @@ fn spawn_player_color_row(parent: &mut ChildSpawnerCommands, player: PlayerId, c
         .with_children(|row| {
             row.spawn((
                 Text::new(color_name(color)),
-                TextFont { font_size: 10.0, ..default() },
+                TextFont {
+                    font_size: 10.0,
+                    ..default()
+                },
                 TextColor(CREAM),
             ));
             row.spawn((
                 Text::new("C 0 / T 0"),
-                TextFont { font_size: 10.0, ..default() },
+                TextFont {
+                    font_size: 10.0,
+                    ..default()
+                },
                 TextColor(CREAM),
                 PlayerColorText { player, color },
             ));
@@ -703,12 +743,18 @@ fn spawn_player_gold_row(parent: &mut ChildSpawnerCommands, player: PlayerId) {
         .with_children(|row| {
             row.spawn((
                 Text::new("GOLD"),
-                TextFont { font_size: 10.0, ..default() },
+                TextFont {
+                    font_size: 10.0,
+                    ..default()
+                },
                 TextColor(CREAM),
             ));
             row.spawn((
                 Text::new("T 0"),
-                TextFont { font_size: 10.0, ..default() },
+                TextFont {
+                    font_size: 10.0,
+                    ..default()
+                },
                 TextColor(CREAM),
                 PlayerGoldText(player),
             ));
@@ -738,13 +784,20 @@ fn spawn_compact_panels(parent: &mut ChildSpawnerCommands, model: &BattleModel) 
                         ..default()
                     },
                     BackgroundColor(Color::srgba(0.055, 0.063, 0.085, 0.92)),
-                    BorderColor::all(if pid == model.0.current_id() { GOLD } else { OUTLINE }),
+                    BorderColor::all(if pid == model.0.current_id() {
+                        GOLD
+                    } else {
+                        OUTLINE
+                    }),
                     PlayerPanel(pid),
                 ))
                 .with_children(|panel| {
                     panel.spawn((
                         Text::new(format!("{} — 0 PTS", player_label(pid))),
-                        TextFont { font_size: 12.0, ..default() },
+                        TextFont {
+                            font_size: 12.0,
+                            ..default()
+                        },
                         TextColor(CREAM),
                         PlayerScoreText(pid),
                     ));
@@ -755,12 +808,21 @@ fn spawn_compact_panels(parent: &mut ChildSpawnerCommands, model: &BattleModel) 
                             p.reserved_cards.len(),
                             p.nobles.len()
                         )),
-                        TextFont { font_size: 9.0, ..default() },
+                        TextFont {
+                            font_size: 9.0,
+                            ..default()
+                        },
                         TextColor(MUTED),
                     ));
                     // active 玩家展开 reserved 详情
                     if pid == model.0.current_id() {
-                        panel.spawn((Node { width: percent(100), ..default() }, ReservedRow(pid)));
+                        panel.spawn((
+                            Node {
+                                width: percent(100),
+                                ..default()
+                            },
+                            ReservedRow(pid),
+                        ));
                     }
                 });
             }
@@ -789,12 +851,18 @@ fn spawn_market(parent: &mut ChildSpawnerCommands, model: &BattleModel) {
                 .with_children(|title| {
                     title.spawn((
                         Text::new("PUBLIC MARKET"),
-                        TextFont { font_size: 19.0, ..default() },
+                        TextFont {
+                            font_size: 19.0,
+                            ..default()
+                        },
                         TextColor(CREAM),
                     ));
                     title.spawn((
                         Text::new("Buy [click] / Reserve [R] / Blind [deck]"),
-                        TextFont { font_size: 9.0, ..default() },
+                        TextFont {
+                            font_size: 9.0,
+                            ..default()
+                        },
                         TextColor(MUTED),
                     ));
                 });
@@ -844,18 +912,27 @@ fn spawn_market_row(parent: &mut ChildSpawnerCommands, level: CardLevel, model: 
             .with_children(|deck| {
                 deck.spawn((
                     Text::new(format!("TIER {}", level.index() + 1)),
-                    TextFont { font_size: 9.0, ..default() },
+                    TextFont {
+                        font_size: 9.0,
+                        ..default()
+                    },
                     TextColor(GOLD),
                 ));
                 deck.spawn((
                     Text::new(format!("{:02}", model.0.decks.remaining(level))),
-                    TextFont { font_size: 21.0, ..default() },
+                    TextFont {
+                        font_size: 21.0,
+                        ..default()
+                    },
                     TextColor(CREAM),
                     DeckCountText(level),
                 ));
                 deck.spawn((
                     Text::new("BLIND"),
-                    TextFont { font_size: 8.0, ..default() },
+                    TextFont {
+                        font_size: 8.0,
+                        ..default()
+                    },
                     TextColor(MUTED),
                 ));
             });
@@ -938,12 +1015,18 @@ fn spawn_card_button(
             .with_children(|top| {
                 top.spawn((
                     Text::new(format!("T{}", level.index() + 1)),
-                    TextFont { font_size: 9.0, ..default() },
+                    TextFont {
+                        font_size: 9.0,
+                        ..default()
+                    },
                     TextColor(GOLD),
                 ));
                 top.spawn((
                     Text::new(format!("{} PTS", card.prestige)),
-                    TextFont { font_size: 9.0, ..default() },
+                    TextFont {
+                        font_size: 9.0,
+                        ..default()
+                    },
                     TextColor(CREAM),
                 ));
             });
@@ -967,14 +1050,20 @@ fn spawn_card_button(
                                 border: UiRect::all(px(1)),
                                 ..default()
                             },
-                            BackgroundColor(gem_color(color.to_gem())
-                                .with_alpha(if amount == 0 { 0.18 } else { 0.72 })),
+                            BackgroundColor(gem_color(color.to_gem()).with_alpha(if amount == 0 {
+                                0.18
+                            } else {
+                                0.72
+                            })),
                             BorderColor::all(gem_color(color.to_gem()).with_alpha(0.85)),
                         ))
                         .with_children(|dot| {
                             dot.spawn((
                                 Text::new(amount.to_string()),
-                                TextFont { font_size: 8.0, ..default() },
+                                TextFont {
+                                    font_size: 8.0,
+                                    ..default()
+                                },
                                 TextColor(if matches!(color, CardColor::White) {
                                     INK
                                 } else {
@@ -1006,7 +1095,10 @@ fn spawn_card_button(
             .with_children(|r| {
                 r.spawn((
                     Text::new("R"),
-                    TextFont { font_size: 9.0, ..default() },
+                    TextFont {
+                        font_size: 9.0,
+                        ..default()
+                    },
                     TextColor(GOLD_BRIGHT),
                 ));
             });
@@ -1033,9 +1125,15 @@ fn spawn_token_supply(parent: &mut ChildSpawnerCommands, model: &BattleModel) {
         .with_children(|supply| {
             supply.spawn((
                 Text::new("CURRENCY"),
-                TextFont { font_size: 9.0, ..default() },
+                TextFont {
+                    font_size: 9.0,
+                    ..default()
+                },
                 TextColor(MUTED),
-                Node { width: px(58), ..default() },
+                Node {
+                    width: px(58),
+                    ..default()
+                },
             ));
             // 5 normal color buttons
             for color in GemColor::NORMAL {
@@ -1043,23 +1141,27 @@ fn spawn_token_supply(parent: &mut ChildSpawnerCommands, model: &BattleModel) {
             }
             // Gold info (no button)
             supply
-                .spawn((
-                    Node {
-                        width: px(58),
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                ))
+                .spawn((Node {
+                    width: px(58),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },))
                 .with_children(|gold| {
                     gold.spawn((
                         Text::new("GOLD"),
-                        TextFont { font_size: 8.0, ..default() },
+                        TextFont {
+                            font_size: 8.0,
+                            ..default()
+                        },
                         TextColor(GOLD),
                     ));
                     gold.spawn((
                         Text::new(format!("x{}", model.0.bank.tokens.gold)),
-                        TextFont { font_size: 14.0, ..default() },
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
                         TextColor(CREAM),
                     ));
                 });
@@ -1110,43 +1212,57 @@ fn spawn_supply_button(parent: &mut ChildSpawnerCommands, color: GemColor, model
                 .with_children(|coin| {
                     coin.spawn((
                         Text::new(color_short(color)),
-                        TextFont { font_size: 9.0, ..default() },
-                        TextColor(if matches!(color, GemColor::White) { INK } else { CREAM }),
+                        TextFont {
+                            font_size: 9.0,
+                            ..default()
+                        },
+                        TextColor(if matches!(color, GemColor::White) {
+                            INK
+                        } else {
+                            CREAM
+                        }),
                     ));
                 });
             token.spawn((
                 Text::new(format!("x{count}")),
-                TextFont { font_size: 12.0, ..default() },
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
                 TextColor(CREAM),
                 SupplyCountText(color),
             ));
             // x2 badge (shown when count >= 4)
             if count >= 4 {
-                token.spawn((
-                    Button,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        right: px(2),
-                        top: px(2),
-                        width: px(22),
-                        height: px(16),
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        border: UiRect::all(px(1)),
-                        border_radius: BorderRadius::all(px(4)),
-                        ..default()
-                    },
-                    BackgroundColor(GOLD.with_alpha(0.85)),
-                    BorderColor::all(GOLD_BRIGHT),
-                    SupplyX2Button(color),
-                ))
-                .with_children(|x2| {
-                    x2.spawn((
-                        Text::new("x2"),
-                        TextFont { font_size: 8.0, ..default() },
-                        TextColor(INK),
-                    ));
-                });
+                token
+                    .spawn((
+                        Button,
+                        Node {
+                            position_type: PositionType::Absolute,
+                            right: px(2),
+                            top: px(2),
+                            width: px(22),
+                            height: px(16),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            border: UiRect::all(px(1)),
+                            border_radius: BorderRadius::all(px(4)),
+                            ..default()
+                        },
+                        BackgroundColor(GOLD.with_alpha(0.85)),
+                        BorderColor::all(GOLD_BRIGHT),
+                        SupplyX2Button(color),
+                    ))
+                    .with_children(|x2| {
+                        x2.spawn((
+                            Text::new("x2"),
+                            TextFont {
+                                font_size: 8.0,
+                                ..default()
+                            },
+                            TextColor(INK),
+                        ));
+                    });
             }
         });
 }
@@ -1163,7 +1279,10 @@ fn spawn_selection_hud(market: &mut ChildSpawnerCommands) {
         .with_children(|hud| {
             hud.spawn((
                 Text::new("0/3"),
-                TextFont { font_size: 11.0, ..default() },
+                TextFont {
+                    font_size: 11.0,
+                    ..default()
+                },
                 TextColor(MUTED),
                 SelectionHudText,
             ));
@@ -1189,7 +1308,10 @@ fn spawn_selection_hud(market: &mut ChildSpawnerCommands) {
             .with_children(|b| {
                 b.spawn((
                     Text::new("TAKE 3"),
-                    TextFont { font_size: 10.0, ..default() },
+                    TextFont {
+                        font_size: 10.0,
+                        ..default()
+                    },
                     TextColor(CREAM),
                 ));
             });
@@ -1215,7 +1337,10 @@ fn spawn_selection_hud(market: &mut ChildSpawnerCommands) {
             .with_children(|b| {
                 b.spawn((
                     Text::new("CLEAR"),
-                    TextFont { font_size: 10.0, ..default() },
+                    TextFont {
+                        font_size: 10.0,
+                        ..default()
+                    },
                     TextColor(MUTED),
                 ));
             });
@@ -1266,12 +1391,18 @@ fn spawn_top_bar(root: &mut ChildSpawnerCommands) {
     .with_children(|bar| {
         bar.spawn((
             Text::new("ARCANA TABLE  /  MARKET"),
-            TextFont { font_size: 15.0, ..default() },
+            TextFont {
+                font_size: 15.0,
+                ..default()
+            },
             TextColor(CREAM),
         ));
         bar.spawn((
             Text::new("TURN 1  /  PLAYER 1"),
-            TextFont { font_size: 12.0, ..default() },
+            TextFont {
+                font_size: 12.0,
+                ..default()
+            },
             TextColor(GOLD),
             TurnText,
         ));
@@ -1279,40 +1410,37 @@ fn spawn_top_bar(root: &mut ChildSpawnerCommands) {
 }
 
 fn spawn_noble_board(root: &mut ChildSpawnerCommands, model: &BattleModel) {
-    root
-        .spawn((
-            Node {
-                width: percent(100),
-                height: px(64),
-                align_items: AlignItems::Center,
-                column_gap: px(10),
-                padding: UiRect::axes(px(12), px(6)),
-                border: UiRect::all(px(1)),
-                border_radius: BorderRadius::all(px(10)),
+    root.spawn((
+        Node {
+            width: percent(100),
+            height: px(64),
+            align_items: AlignItems::Center,
+            column_gap: px(10),
+            padding: UiRect::axes(px(12), px(6)),
+            border: UiRect::all(px(1)),
+            border_radius: BorderRadius::all(px(10)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.05, 0.05, 0.07, 0.85)),
+        BorderColor::all(GOLD.with_alpha(0.3)),
+        NobleBoardArea,
+    ))
+    .with_children(|board| {
+        board.spawn((
+            Text::new("NOBLES"),
+            TextFont {
+                font_size: 9.0,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.05, 0.05, 0.07, 0.85)),
-            BorderColor::all(GOLD.with_alpha(0.3)),
-            NobleBoardArea,
-        ))
-        .with_children(|board| {
-            board.spawn((
-                Text::new("NOBLES"),
-                TextFont { font_size: 9.0, ..default() },
-                TextColor(GOLD),
-            ));
-            for noble in &model.0.nobles.available {
-                spawn_noble_badge(board, noble.id, noble.requirement, noble.prestige);
-            }
-        });
+            TextColor(GOLD),
+        ));
+        for noble in &model.0.nobles.available {
+            spawn_noble_badge(board, noble.id, noble.requirement, noble.prestige);
+        }
+    });
 }
 
-fn spawn_noble_badge(
-    parent: &mut ChildSpawnerCommands,
-    id: NobleId,
-    req: GemCost,
-    prestige: u8,
-) {
+fn spawn_noble_badge(parent: &mut ChildSpawnerCommands, id: NobleId, req: GemCost, prestige: u8) {
     parent
         .spawn((
             Node {
@@ -1330,9 +1458,18 @@ fn spawn_noble_badge(
         ))
         .with_children(|b| {
             b.spawn((
-                Text::new(format!("{prestige}P {req_w}.{req_b}.{req_g}.{req_r}.{req_k}",
-                    req_w = req.white, req_b = req.blue, req_g = req.green, req_r = req.red, req_k = req.black)),
-                TextFont { font_size: 7.0, ..default() },
+                Text::new(format!(
+                    "{prestige}P {req_w}.{req_b}.{req_g}.{req_r}.{req_k}",
+                    req_w = req.white,
+                    req_b = req.blue,
+                    req_g = req.green,
+                    req_r = req.red,
+                    req_k = req.black
+                )),
+                TextFont {
+                    font_size: 7.0,
+                    ..default()
+                },
                 TextColor(CREAM),
                 TextLayout::new_with_justify(Justify::Center),
             ));
@@ -1351,12 +1488,18 @@ fn spawn_footer(root: &mut ChildSpawnerCommands) {
     .with_children(|footer| {
         footer.spawn((
             Text::new("CLICK BUY / R RESERVE / CLICK TOKEN x2 / TAKE 3 / ESC MENU"),
-            TextFont { font_size: 9.0, ..default() },
+            TextFont {
+                font_size: 9.0,
+                ..default()
+            },
             TextColor(MUTED),
         ));
         footer.spawn((
             Text::new("Choose an action."),
-            TextFont { font_size: 10.0, ..default() },
+            TextFont {
+                font_size: 10.0,
+                ..default()
+            },
             TextColor(GOLD),
             StatusText,
         ));
@@ -1365,7 +1508,12 @@ fn spawn_footer(root: &mut ChildSpawnerCommands) {
 
 fn mouse_actions(
     mut interactions: Query<
-        (&Interaction, &mut BorderColor, Option<&BattleAction>, Entity),
+        (
+            &Interaction,
+            &mut BorderColor,
+            Option<&BattleAction>,
+            Entity,
+        ),
         Changed<Interaction>,
     >,
     supply: Query<(&Interaction, &SupplyButton), Changed<Interaction>>,
@@ -1391,23 +1539,19 @@ fn mouse_actions(
     // x2 click -> direct enqueue
     for (interaction, btn) in &supply_x2 {
         if matches!(*interaction, Interaction::Pressed) {
-            queue
-                .0
-                .push(QueuedRuleDecision::Action(BattleAction::TakeTwoSameTokens(btn.0).to_player_action()));
+            queue.0.push(QueuedRuleDecision::Action(
+                BattleAction::TakeTwoSameTokens(btn.0).to_player_action(),
+            ));
             picker.selected.clear();
         }
     }
     // Confirm take 3
     if let Ok(interaction) = confirm.single() {
         if matches!(*interaction, Interaction::Pressed) && picker.selected.len() == 3 {
-            let triple = Triple([
-                picker.selected[0],
-                picker.selected[1],
-                picker.selected[2],
-            ]);
-            queue
-                .0
-                .push(QueuedRuleDecision::Action(BattleAction::TakeThreeDifferentTokens(triple).to_player_action()));
+            let triple = Triple([picker.selected[0], picker.selected[1], picker.selected[2]]);
+            queue.0.push(QueuedRuleDecision::Action(
+                BattleAction::TakeThreeDifferentTokens(triple).to_player_action(),
+            ));
             picker.selected.clear();
         }
     }
@@ -1452,10 +1596,8 @@ fn apply_rule_decisions(
     }
     for decision in decisions {
         let pid = model.0.current_id();
-        let is_choose_noble = matches!(
-            decision,
-            QueuedRuleDecision::Resume(Resume::ChooseNoble(_))
-        );
+        let is_choose_noble =
+            matches!(decision, QueuedRuleDecision::Resume(Resume::ChooseNoble(_)));
         let result = match apply_queued_decision(&mut model.0, pid, decision) {
             Ok(r) => r,
             Err(e) => {
@@ -1560,7 +1702,9 @@ fn play_events(
                 }
             }
         }
-        GameEvent::CardReserved { player, got_gold, .. } => {
+        GameEvent::CardReserved {
+            player, got_gold, ..
+        } => {
             ***status = format!(
                 "Player {} reserved a card{}.",
                 player + 1,
@@ -1593,10 +1737,9 @@ fn play_events(
             // （下一帧 refresh 不会重建市场槽，故仅发牌动画的落点可能不准；可接受）。
             if card.is_some() {
                 if let Some(card_obj) = model.0.market.visible(*level).last() {
-                    if let Some((slot_entity, _)) = card_slots
-                        .iter()
-                        .find(|(_, s)| s.level == *level && model.0.market.visible(*level).len() == s.slot + 1)
-                    {
+                    if let Some((slot_entity, _)) = card_slots.iter().find(|(_, s)| {
+                        s.level == *level && model.0.market.visible(*level).len() == s.slot + 1
+                    }) {
                         commands.entity(slot_entity).with_children(|p| {
                             p.spawn((
                                 Node {
@@ -1636,7 +1779,11 @@ fn play_events(
 }
 
 /// 卡面 spawn（无 Buy/Reserve 按钮，纯视觉，用于发牌动画）。
-fn spawn_card_button_inner(parent: &mut ChildSpawnerCommands, card: DevelopmentCard, level: CardLevel) {
+fn spawn_card_button_inner(
+    parent: &mut ChildSpawnerCommands,
+    card: DevelopmentCard,
+    level: CardLevel,
+) {
     parent
         .spawn((
             Node {
@@ -1663,7 +1810,10 @@ fn spawn_card_button_inner(parent: &mut ChildSpawnerCommands, card: DevelopmentC
         .with_children(|face| {
             face.spawn((
                 Text::new(format!("T{} {}P", level.index() + 1, card.prestige)),
-                TextFont { font_size: 9.0, ..default() },
+                TextFont {
+                    font_size: 9.0,
+                    ..default()
+                },
                 TextColor(GOLD),
             ));
         });
@@ -1704,8 +1854,15 @@ fn spawn_fly_coin(
             .with_children(|coin| {
                 coin.spawn((
                     Text::new(color_short(color)),
-                    TextFont { font_size: 10.0, ..default() },
-                    TextColor(if matches!(color, GemColor::White) { INK } else { CREAM }),
+                    TextFont {
+                        font_size: 10.0,
+                        ..default()
+                    },
+                    TextColor(if matches!(color, GemColor::White) {
+                        INK
+                    } else {
+                        CREAM
+                    }),
                 ));
             });
     });
@@ -1719,28 +1876,27 @@ fn spawn_fly_coin_back(
     _player: PlayerId,
 ) {
     commands.entity(root).with_children(|overlay| {
-        overlay
-            .spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: px(32),
-                    height: px(32),
-                    left: percent(50),
-                    top: percent(50),
-                    align_items: AlignItems::Center,
-                    justify_content: JustifyContent::Center,
-                    border: UiRect::all(px(2)),
-                    border_radius: BorderRadius::MAX,
-                    ..default()
-                },
-                BackgroundColor(gem_color(color)),
-                BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.42)),
-                UiTransform::default(),
-                FlyAnimation {
-                    timer: Timer::from_seconds(0.45, TimerMode::Once),
-                    target: Vec2::new(-dir * 0.0, 175.0),
-                },
-            ));
+        overlay.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: px(32),
+                height: px(32),
+                left: percent(50),
+                top: percent(50),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                border: UiRect::all(px(2)),
+                border_radius: BorderRadius::MAX,
+                ..default()
+            },
+            BackgroundColor(gem_color(color)),
+            BorderColor::all(Color::srgba(1.0, 1.0, 1.0, 0.42)),
+            UiTransform::default(),
+            FlyAnimation {
+                timer: Timer::from_seconds(0.45, TimerMode::Once),
+                target: Vec2::new(-dir * 0.0, 175.0),
+            },
+        ));
     });
 }
 
@@ -1842,7 +1998,11 @@ fn commit_pending_phase(
     let _ = pending_nobles;
 }
 
-fn spawn_discard_overlay(mut commands: Commands, root: Single<Entity, With<BattleRoot>>, excess: u8) {
+fn spawn_discard_overlay(
+    mut commands: Commands,
+    root: Single<Entity, With<BattleRoot>>,
+    excess: u8,
+) {
     let root_e = *root;
     commands.entity(root_e).with_children(|overlay| {
         overlay
@@ -1877,12 +2037,18 @@ fn spawn_discard_overlay(mut commands: Commands, root: Single<Entity, With<Battl
                     .with_children(|panel| {
                         panel.spawn((
                             Text::new(format!("DISCARD {excess} TOKENS")),
-                            TextFont { font_size: 18.0, ..default() },
+                            TextFont {
+                                font_size: 18.0,
+                                ..default()
+                            },
                             TextColor(GOLD_BRIGHT),
                         ));
                         panel.spawn((
                             Text::new("0 returned"),
-                            TextFont { font_size: 12.0, ..default() },
+                            TextFont {
+                                font_size: 12.0,
+                                ..default()
+                            },
                             TextColor(CREAM),
                             DiscardHudText,
                         ));
@@ -1907,7 +2073,10 @@ fn spawn_discard_overlay(mut commands: Commands, root: Single<Entity, With<Battl
                                 .with_children(|row| {
                                     row.spawn((
                                         Text::new(color_name(c)),
-                                        TextFont { font_size: 11.0, ..default() },
+                                        TextFont {
+                                            font_size: 11.0,
+                                            ..default()
+                                        },
                                         TextColor(CREAM),
                                     ));
                                 });
@@ -1931,7 +2100,10 @@ fn spawn_discard_overlay(mut commands: Commands, root: Single<Entity, With<Battl
                             .with_children(|b| {
                                 b.spawn((
                                     Text::new("CONFIRM"),
-                                    TextFont { font_size: 12.0, ..default() },
+                                    TextFont {
+                                        font_size: 12.0,
+                                        ..default()
+                                    },
                                     TextColor(CREAM),
                                 ));
                             });
@@ -1978,7 +2150,10 @@ fn spawn_noble_overlay(
                 .with_children(|panel| {
                     panel.spawn((
                         Text::new("CHOOSE A NOBLE"),
-                        TextFont { font_size: 18.0, ..default() },
+                        TextFont {
+                            font_size: 18.0,
+                            ..default()
+                        },
                         TextColor(GOLD_BRIGHT),
                     ));
                     for &id in candidates {
@@ -2001,7 +2176,10 @@ fn spawn_noble_overlay(
                             .with_children(|b| {
                                 b.spawn((
                                     Text::new(format!("NOBLE #{id} (3 pts)")),
-                                    TextFont { font_size: 13.0, ..default() },
+                                    TextFont {
+                                        font_size: 13.0,
+                                        ..default()
+                                    },
                                     TextColor(CREAM),
                                     NobleCandidateText(id),
                                 ));
@@ -2051,13 +2229,19 @@ fn spawn_gameover_overlay(
                 .with_children(|panel| {
                     panel.spawn((
                         Text::new(format!("GAME OVER — PLAYER {} WINS", winner + 1)),
-                        TextFont { font_size: 18.0, ..default() },
+                        TextFont {
+                            font_size: 18.0,
+                            ..default()
+                        },
                         TextColor(GOLD_BRIGHT),
                     ));
                     for (i, (pid, score)) in standings.iter().enumerate() {
                         panel.spawn((
                             Text::new(format!("{}. PLAYER {} — {} pts", i + 1, pid + 1, score)),
-                            TextFont { font_size: 13.0, ..default() },
+                            TextFont {
+                                font_size: 13.0,
+                                ..default()
+                            },
                             TextColor(CREAM),
                         ));
                     }
@@ -2080,7 +2264,10 @@ fn spawn_gameover_overlay(
                         .with_children(|b| {
                             b.spawn((
                                 Text::new("BACK TO MENU"),
-                                TextFont { font_size: 13.0, ..default() },
+                                TextFont {
+                                    font_size: 13.0,
+                                    ..default()
+                                },
                                 TextColor(INK),
                             ));
                         });
@@ -2113,9 +2300,7 @@ fn discard_overlay_input(
         }
     }
     if let Ok(interaction) = confirm.single() {
-        if matches!(*interaction, Interaction::Pressed)
-            && buf.returned.total() == buf.excess
-        {
+        if matches!(*interaction, Interaction::Pressed) && buf.returned.total() == buf.excess {
             // 入队 resume 决策；交由 apply_rule_decisions 落地，本系统只管 UI。
             let returned = buf.returned;
             queue
@@ -2193,14 +2378,14 @@ fn keyboard_actions(
     if keys.just_pressed(KeyCode::Enter) {
         match focus.zone {
             FocusZone::Market { level, slot } => {
-                queue
-                    .0
-                    .push(QueuedRuleDecision::Action(BattleAction::BuyVisibleCard { level, idx: slot }.to_player_action()));
+                queue.0.push(QueuedRuleDecision::Action(
+                    BattleAction::BuyVisibleCard { level, idx: slot }.to_player_action(),
+                ));
             }
             FocusZone::DeckReserve { level } => {
-                queue
-                    .0
-                    .push(QueuedRuleDecision::Action(BattleAction::ReserveDeckCard(level).to_player_action()));
+                queue.0.push(QueuedRuleDecision::Action(
+                    BattleAction::ReserveDeckCard(level).to_player_action(),
+                ));
             }
             FocusZone::Supply { color } => {
                 if picker.selected.len() < 3
@@ -2211,17 +2396,17 @@ fn keyboard_actions(
                 }
             }
             FocusZone::SupplyX2 { color } => {
-                queue
-                    .0
-                    .push(QueuedRuleDecision::Action(BattleAction::TakeTwoSameTokens(color).to_player_action()));
+                queue.0.push(QueuedRuleDecision::Action(
+                    BattleAction::TakeTwoSameTokens(color).to_player_action(),
+                ));
                 picker.selected.clear();
             }
             FocusZone::ConfirmTake3 => {
                 if picker.selected.len() == 3 {
                     let t = Triple([picker.selected[0], picker.selected[1], picker.selected[2]]);
-                    queue
-                        .0
-                        .push(QueuedRuleDecision::Action(BattleAction::TakeThreeDifferentTokens(t).to_player_action()));
+                    queue.0.push(QueuedRuleDecision::Action(
+                        BattleAction::TakeThreeDifferentTokens(t).to_player_action(),
+                    ));
                     picker.selected.clear();
                 }
             }
@@ -2230,26 +2415,37 @@ fn keyboard_actions(
             }
             FocusZone::Reserved { player, idx } => {
                 if player == model.0.current_id() {
-                    queue
-                        .0
-                        .push(QueuedRuleDecision::Action(BattleAction::BuyReservedCard(idx).to_player_action()));
+                    queue.0.push(QueuedRuleDecision::Action(
+                        BattleAction::BuyReservedCard(idx).to_player_action(),
+                    ));
                 }
             }
             FocusZone::ReserveMarket { level, slot } => {
-                queue
-                    .0
-                    .push(QueuedRuleDecision::Action(BattleAction::ReserveVisibleCard { level, idx: slot }.to_player_action()));
+                queue.0.push(QueuedRuleDecision::Action(
+                    BattleAction::ReserveVisibleCard { level, idx: slot }.to_player_action(),
+                ));
             }
         }
     }
     // 方向键：市场内 3x4 移动
     if let FocusZone::Market { level, slot } = focus.zone {
         let (mut lvl_idx, mut s) = (level.index(), slot);
-        if keys.just_pressed(KeyCode::ArrowLeft) { s = s.saturating_sub(1); }
-        if keys.just_pressed(KeyCode::ArrowRight) { s = (s + 1).min(VISIBLE_PER_LEVEL - 1); }
-        if keys.just_pressed(KeyCode::ArrowUp) { lvl_idx = (lvl_idx + 1).min(2); }
-        if keys.just_pressed(KeyCode::ArrowDown) { lvl_idx = lvl_idx.saturating_sub(1); }
-        focus.zone = FocusZone::Market { level: level_of(lvl_idx), slot: s };
+        if keys.just_pressed(KeyCode::ArrowLeft) {
+            s = s.saturating_sub(1);
+        }
+        if keys.just_pressed(KeyCode::ArrowRight) {
+            s = (s + 1).min(VISIBLE_PER_LEVEL - 1);
+        }
+        if keys.just_pressed(KeyCode::ArrowUp) {
+            lvl_idx = (lvl_idx + 1).min(2);
+        }
+        if keys.just_pressed(KeyCode::ArrowDown) {
+            lvl_idx = lvl_idx.saturating_sub(1);
+        }
+        focus.zone = FocusZone::Market {
+            level: level_of(lvl_idx),
+            slot: s,
+        };
     }
 }
 
@@ -2354,13 +2550,23 @@ fn refresh_battle_ui(
             "TURN {}  /  PLAYER {}{}",
             turn.0 + 1,
             model.0.current_id() + 1,
-            if model.0.end_triggered { "  /  FINAL" } else { "" }
+            if model.0.end_triggered {
+                "  /  FINAL"
+            } else {
+                ""
+            }
         );
     }
     {
         let mut scores = texts.p1();
         for (m, mut text) in &mut scores {
-            **text = format!("{} PTS", model.0.player(m.0).score(&model.0.card_store, &model.0.noble_store));
+            **text = format!(
+                "{} PTS",
+                model
+                    .0
+                    .player(m.0)
+                    .score(&model.0.card_store, &model.0.noble_store)
+            );
         }
     }
     {
@@ -2368,7 +2574,11 @@ fn refresh_battle_ui(
         for (m, mut text) in &mut colors {
             let p = model.0.player(m.player);
             let bonus = p.bonus(&model.0.card_store);
-            **text = format!("C {} / T {}", bonus.get(card_color_of(m.color)), p.token_count(m.color));
+            **text = format!(
+                "C {} / T {}",
+                bonus.get(card_color_of(m.color)),
+                p.token_count(m.color)
+            );
         }
     }
     {
@@ -2381,7 +2591,11 @@ fn refresh_battle_ui(
         let mut decks = texts.p4();
         for (m, mut text) in &mut decks {
             let remaining = model.0.decks.remaining(m.0);
-            **text = if remaining == 0 { "EMPTY".into() } else { format!("{remaining:02}") };
+            **text = if remaining == 0 {
+                "EMPTY".into()
+            } else {
+                format!("{remaining:02}")
+            };
         }
     }
     {
@@ -2400,12 +2614,20 @@ fn refresh_battle_ui(
         let mut states = texts.p7();
         for (m, mut text, mut color) in &mut states {
             let active = m.0 == model.0.current_id();
-            **text = if active { "ACTIVE".into() } else { "WAITING".into() };
+            **text = if active {
+                "ACTIVE".into()
+            } else {
+                "WAITING".into()
+            };
             color.0 = if active { GOLD } else { MUTED };
         }
     }
     for (panel, mut border) in &mut panels {
-        *border = BorderColor::all(if panel.0 == model.0.current_id() { GOLD } else { OUTLINE });
+        *border = BorderColor::all(if panel.0 == model.0.current_id() {
+            GOLD
+        } else {
+            OUTLINE
+        });
     }
     // 重建 reserved 行
     for (row_entity, row) in &reserved_rows {
@@ -2415,7 +2637,10 @@ fn refresh_battle_ui(
         commands.entity(row_entity).with_children(|row_c| {
             row_c.spawn((
                 Text::new(format!("RESERVED ({}/3)", p.reserved_cards.len())),
-                TextFont { font_size: 8.0, ..default() },
+                TextFont {
+                    font_size: 8.0,
+                    ..default()
+                },
                 TextColor(MUTED.with_alpha(0.7)),
             ));
             for (i, reserved) in p.reserved_cards.iter().copied().enumerate() {
@@ -2444,14 +2669,20 @@ fn refresh_battle_ui(
         commands.entity(row_entity).with_children(|row_c| {
             row_c.spawn((
                 Text::new(format!("NOBLES ({})", p.nobles.len())),
-                TextFont { font_size: 8.0, ..default() },
+                TextFont {
+                    font_size: 8.0,
+                    ..default()
+                },
                 TextColor(MUTED.with_alpha(0.7)),
             ));
             for &nid in &p.nobles {
                 if let Some(n) = model.0.noble_store.get(nid) {
                     row_c.spawn((
                         Text::new(format!("{}P", n.prestige)),
-                        TextFont { font_size: 10.0, ..default() },
+                        TextFont {
+                            font_size: 10.0,
+                            ..default()
+                        },
                         TextColor(GOLD_BRIGHT),
                     ));
                 }
@@ -2492,7 +2723,10 @@ fn spawn_reserved_card_mini(
     entity.with_children(|c| {
         c.spawn((
             Text::new(format!("{}P", card.prestige)),
-            TextFont { font_size: 9.0, ..default() },
+            TextFont {
+                font_size: 9.0,
+                ..default()
+            },
             TextColor(GOLD_BRIGHT),
         ));
     });
@@ -2524,7 +2758,10 @@ fn spawn_reserved_card_back(parent: &mut ChildSpawnerCommands, level: CardLevel)
             };
             c.spawn((
                 Text::new(label),
-                TextFont { font_size: 8.0, ..default() },
+                TextFont {
+                    font_size: 8.0,
+                    ..default()
+                },
                 TextColor(MUTED),
             ));
         });
@@ -2633,7 +2870,14 @@ mod tests {
 
     #[test]
     fn gem_color_handles_all_six() {
-        for c in [GemColor::White, GemColor::Blue, GemColor::Green, GemColor::Red, GemColor::Black, GemColor::Gold] {
+        for c in [
+            GemColor::White,
+            GemColor::Blue,
+            GemColor::Green,
+            GemColor::Red,
+            GemColor::Black,
+            GemColor::Gold,
+        ] {
             let _ = gem_color(c); // 不 panic 即可
         }
     }
@@ -2646,7 +2890,10 @@ mod tests {
     #[test]
     fn pending_phase_not_committed_while_events_pending() {
         let mut pending = PendingEvents::default();
-        pending.0.push(GameEvent::TokensTaken { player: 0, tokens: TokenSet::default() });
+        pending.0.push(GameEvent::TokensTaken {
+            player: 0,
+            tokens: TokenSet::default(),
+        });
         let phase = BattlePhase::Idle;
         let pp = PendingPhase::default(); // None
         let busy = false;
@@ -2666,7 +2913,9 @@ mod tests {
     fn pending_phase_committed_when_idle_events_empty_and_not_busy() {
         let pending = PendingEvents::default();
         let phase = BattlePhase::Idle;
-        let pp = PendingPhase(Some(BattlePhase::AwaitNobleChoice { candidates: vec![0] }));
+        let pp = PendingPhase(Some(BattlePhase::AwaitNobleChoice {
+            candidates: vec![0],
+        }));
         let busy = false;
         assert!(should_commit_phase(&pending, busy, &phase, &pp));
     }
@@ -2684,24 +2933,44 @@ mod tests {
     fn maps_all_actions_to_player_action() {
         let cases: Vec<(BattleAction, PlayerAction)> = vec![
             (
-                BattleAction::TakeThreeDifferentTokens(Triple([GemColor::White, GemColor::Blue, GemColor::Green])),
-                PlayerAction::TakeThreeDifferentTokens(vec![GemColor::White, GemColor::Blue, GemColor::Green]),
+                BattleAction::TakeThreeDifferentTokens(Triple([
+                    GemColor::White,
+                    GemColor::Blue,
+                    GemColor::Green,
+                ])),
+                PlayerAction::TakeThreeDifferentTokens(vec![
+                    GemColor::White,
+                    GemColor::Blue,
+                    GemColor::Green,
+                ]),
             ),
             (
                 BattleAction::TakeTwoSameTokens(GemColor::Red),
                 PlayerAction::TakeTwoSameTokens(GemColor::Red),
             ),
             (
-                BattleAction::ReserveVisibleCard { level: CardLevel::Level1, idx: 2 },
-                PlayerAction::ReserveVisibleCard { level: CardLevel::Level1, idx: 2 },
+                BattleAction::ReserveVisibleCard {
+                    level: CardLevel::Level1,
+                    idx: 2,
+                },
+                PlayerAction::ReserveVisibleCard {
+                    level: CardLevel::Level1,
+                    idx: 2,
+                },
             ),
             (
                 BattleAction::ReserveDeckCard(CardLevel::Level2),
                 PlayerAction::ReserveDeckCard(CardLevel::Level2),
             ),
             (
-                BattleAction::BuyVisibleCard { level: CardLevel::Level3, idx: 0 },
-                PlayerAction::BuyVisibleCard { level: CardLevel::Level3, idx: 0 },
+                BattleAction::BuyVisibleCard {
+                    level: CardLevel::Level3,
+                    idx: 0,
+                },
+                PlayerAction::BuyVisibleCard {
+                    level: CardLevel::Level3,
+                    idx: 0,
+                },
             ),
             (
                 BattleAction::BuyReservedCard(1),
@@ -2720,11 +2989,14 @@ mod tests {
         let empty = PendingEvents::default();
 
         assert!(can_act(&idle, false, &empty));
-        assert!(!can_act(&idle, true, &empty));       // busy
+        assert!(!can_act(&idle, true, &empty)); // busy
         assert!(!can_act(&non_idle, false, &empty)); // not idle
         let mut pending = PendingEvents::default();
-        pending.0.push(GameEvent::NobleVisited { player: 0, noble: 0 });
-        assert!(!can_act(&idle, false, &pending));    // events pending
+        pending.0.push(GameEvent::NobleVisited {
+            player: 0,
+            noble: 0,
+        });
+        assert!(!can_act(&idle, false, &pending)); // events pending
     }
 
     #[test]
@@ -2740,8 +3012,12 @@ mod tests {
 
     #[test]
     fn outcome_need_choose_noble_maps() {
-        let p = outcome_to_pending(ActionOutcome::NeedChooseNoble { candidates: vec![1, 2] });
-        assert!(matches!(p, Some(BattlePhase::AwaitNobleChoice { candidates }) if candidates == vec![1, 2]));
+        let p = outcome_to_pending(ActionOutcome::NeedChooseNoble {
+            candidates: vec![1, 2],
+        });
+        assert!(
+            matches!(p, Some(BattlePhase::AwaitNobleChoice { candidates }) if candidates == vec![1, 2])
+        );
     }
 
     #[test]

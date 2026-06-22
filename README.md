@@ -18,3 +18,13 @@ cargo run
 - 程序化卡牌展示，无外部美术资源依赖
 - 窄窗口响应式布局
 
+## Computer opponent
+
+New Adventure starts a two-player game with the human as Player 1 (`YOU`) and a computer as Player 2 (`CPU`). The computer uses a hidden-information MCTS search for up to one second per action, discard, or noble choice. Blind-reserved cards remain hidden from the opponent.
+
+AI correctness tests run with `cargo test`. The longer deterministic strength check is available with:
+
+```powershell
+cargo test mcts_beats_random_at_least_sixty_five_percent -- --ignored --nocapture
+```
+

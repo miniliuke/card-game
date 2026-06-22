@@ -11,8 +11,8 @@
 //! 根决策；后者返回 `AiError::Cancelled`。
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use rand::SeedableRng;
@@ -236,7 +236,17 @@ fn tree_iteration<R: rand::Rng + ?Sized>(
 
         // 每次树决策前对当前行动者做 actor-relative 重采样。
         let actor = simulation.game.current_id();
-        knowledge.redeterminize_for_actor(simulation, actor, rng)?;
+        // 重采样可能在退化局面下因候选不守恒失败（树内 apply_decision 改变了牌堆/保留
+        // 分布，与标准牌库逐级分配不再平衡）。此时以当前评估值结算本迭代并退出，
+        // 不让单次退化采样中止整次搜索。
+        if knowledge
+            .redeterminize_for_actor(simulation, actor, rng)
+            .is_err()
+        {
+            let reward = super::evaluation::evaluate(&simulation.game, root);
+            backpropagate(tree, path, root, reward);
+            return Ok(());
+        }
 
         let key = AiObservation::from_game(&simulation.game, actor)
             .information_set_key(&simulation.context);
@@ -255,10 +265,7 @@ fn tree_iteration<R: rand::Rng + ?Sized>(
         node.visits += 1;
         // 每次访问信息集时为每条当前合法边累加 availability。
         for decision in &legal {
-            node.edges
-                .entry(decision.clone())
-                .or_default()
-                .availability += 1;
+            node.edges.entry(decision.clone()).or_default().availability += 1;
         }
 
         // 找未存在的合法边（树未满时扩展）。
@@ -403,6 +410,7 @@ mod tests {
     use super::*;
     use crate::ai::decision::DecisionContext;
     use crate::rules::GameState;
+    use rand::Rng;
 
     #[test]
     fn opponent_uct_inverts_root_reward() {
@@ -498,5 +506,133 @@ mod tests {
             control,
         );
         assert_eq!(result.unwrap_err(), AiError::Cancelled);
+    }
+
+    #[test]
+    fn seeded_ai_games_terminate_with_only_legal_decisions() {
+        for seed in 0..4u64 {
+            let game = GameState::new_seeded(2, seed).unwrap();
+            let mut simulation = SimulationState::new(game, DecisionContext::MainTurn);
+            for decision_index in 0..600u64 {
+                if simulation.game.is_over() {
+                    break;
+                }
+                let player = simulation.game.current_id();
+                let observation = AiObservation::from_game(&simulation.game, player);
+                let result = match search(
+                    observation,
+                    simulation.context.clone(),
+                    player,
+                    seed ^ decision_index,
+                    MctsConfig::for_iterations(64),
+                    SearchControl::new(),
+                ) {
+                    Ok(r) => r,
+                    Err(AiError::NoLegalDecision) => {
+                        // 罕见死锁：当前玩家无合法行动且游戏未结束（牌堆耗尽 + 保留满 +
+                        // 买不起 + 银行不足以拿筹码）。规则层无 pass 行动，视为该局终止。
+                        break;
+                    }
+                    Err(e) => panic!("seed {seed} step {decision_index} search err: {e:?}"),
+                };
+                assert!(
+                    simulation
+                        .legal_decisions()
+                        .unwrap()
+                        .contains(&result.decision),
+                    "seed {seed} 决策 #{decision_index} 非法: {:?}",
+                    result.decision
+                );
+                simulation.apply_decision(result.decision).unwrap();
+            }
+            // 终止条件：要么游戏结束，要么死锁（无合法决策）。
+            assert!(
+                simulation.game.is_over() || simulation.legal_decisions().unwrap().is_empty(),
+                "seed {seed} 未在 600 步内结束也未死锁"
+            );
+        }
+    }
+
+    /// 强度基准汇总。
+    struct BenchmarkSummary {
+        games: u32,
+        mcts_wins: u32,
+    }
+
+    impl BenchmarkSummary {
+        fn win_rate(&self) -> f32 {
+            self.mcts_wins as f32 / self.games as f32
+        }
+    }
+
+    fn benchmark_against_random(seeds: u64, iterations: u32, base_seed: u64) -> BenchmarkSummary {
+        let mut summary = BenchmarkSummary {
+            games: 0,
+            mcts_wins: 0,
+        };
+        for seed in 0..seeds {
+            for mcts_seat in [0u64, 1u64] {
+                let winner =
+                    play_benchmark_game(seed, mcts_seat as PlayerId, iterations, base_seed);
+                summary.games += 1;
+                // 平局（None）不计为 MCTS 胜。
+                if winner == Some(mcts_seat as PlayerId) {
+                    summary.mcts_wins += 1;
+                }
+            }
+        }
+        summary
+    }
+
+    fn play_benchmark_game(
+        game_seed: u64,
+        mcts_seat: PlayerId,
+        iterations: u32,
+        policy_seed: u64,
+    ) -> Option<PlayerId> {
+        let game = GameState::new_seeded(2, game_seed).unwrap();
+        let mut simulation = SimulationState::new(game, DecisionContext::MainTurn);
+        let mut random = StdRng::seed_from_u64(policy_seed ^ game_seed ^ mcts_seat as u64);
+        for decision_index in 0..600_u64 {
+            if let Some(winner) = simulation.game.winner {
+                return Some(winner);
+            }
+            let player = simulation.game.current_id();
+            let legal = match simulation.legal_decisions() {
+                Ok(l) if !l.is_empty() => l,
+                _ => return None, // 死锁：无合法决策，视为平局（MCTS 不胜）。
+            };
+            let decision = if player == mcts_seat {
+                let observation = AiObservation::from_game(&simulation.game, player);
+                match search(
+                    observation,
+                    simulation.context.clone(),
+                    player,
+                    policy_seed ^ game_seed ^ decision_index,
+                    MctsConfig::for_iterations(iterations),
+                    SearchControl::new(),
+                ) {
+                    Ok(r) => r.decision,
+                    Err(_) => return None,
+                }
+            } else {
+                legal[random.random_range(0..legal.len())].clone()
+            };
+            simulation.apply_decision(decision).unwrap();
+        }
+        None // 600 步未结束，视为平局。
+    }
+
+    #[test]
+    #[ignore = "manual AI strength benchmark"]
+    fn mcts_beats_random_at_least_sixty_five_percent() {
+        let summary = benchmark_against_random(100, 256, 0xA11CE);
+        assert!(
+            summary.mcts_wins * 100 >= summary.games * 65,
+            "MCTS wins {}/{} ({:.1}%)",
+            summary.mcts_wins,
+            summary.games,
+            summary.win_rate() * 100.0
+        );
     }
 }

@@ -190,9 +190,7 @@ fn current_decision_context(
 fn phase_to_context(phase: &BattlePhase) -> Option<DecisionContext> {
     match phase {
         BattlePhase::Idle => Some(DecisionContext::MainTurn),
-        BattlePhase::AwaitDiscard { excess } => {
-            Some(DecisionContext::Discard { excess: *excess })
-        }
+        BattlePhase::AwaitDiscard { excess } => Some(DecisionContext::Discard { excess: *excess }),
         BattlePhase::AwaitNobleChoice { candidates } => Some(DecisionContext::ChooseNoble {
             candidates: candidates.clone(),
         }),
@@ -309,20 +307,26 @@ pub(super) fn start_ai_search(
 
 /// 系统：非阻塞轮询活跃任务；完成则收纳为 ready。
 pub(super) fn poll_ai_search(mut runtime: ResMut<AiRuntime>) {
-    let Some(active) = runtime.active.as_mut() else {
-        return;
-    };
-    if active.task.is_finished() {
-        if let Some(outcome) = block_on(poll_once(&mut active.task)) {
-            let token = active.token;
-            // 任务已取出，清空 active 槽。
-            runtime.accept_task_outcome(token, outcome);
-            runtime.active = None;
+    let outcome = {
+        let Some(active) = runtime.active.as_mut() else {
+            return;
+        };
+        if !active.task.is_finished() {
+            return;
         }
+        let outcome = block_on(poll_once(&mut active.task));
+        let token = active.token;
+        outcome.map(|o| (token, o))
+    };
+    if let Some((token, outcome)) = outcome {
+        // 任务已取出，清空 active 槽。
+        runtime.accept_task_outcome(token, outcome);
+        runtime.active = None;
     }
 }
 
 /// 系统：提交 ready 结果到 `RuleDecisionQueue`（仅当 token 仍匹配且无动画/事件）。
+#[allow(clippy::too_many_arguments)]
 pub(super) fn submit_ready_ai_decision(
     model: Res<BattleModel>,
     phase: Res<BattlePhase>,
