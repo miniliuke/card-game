@@ -31,7 +31,7 @@ pub use noble::{Noble, NobleBoard, NobleId, NobleStore}; // Task 6
 pub use player::{PlayerState, ReserveOrigin, ReservedCard}; // Task 7
 pub use market::{CardDecks, Market}; // Task 8
 pub use state::GameState; // Task 12
-pub use actions::{ActionOutcome, ActionResult, PlayerAction, Resume, apply_action, resume, validate_action}; // Task 13
+pub use actions::{ActionOutcome, ActionResult, PlayerAction, Resume, apply_action, legal_actions, resume, validate_action}; // Task 13
 pub use scoring::{calculate_score, compare_players, eligible_nobles}; // Task 10
 pub use events::GameEvent; // Task 9
 pub use error::RuleError; // Task 3

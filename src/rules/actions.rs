@@ -81,6 +81,49 @@ pub fn validate_action(
     validate(action, state, player)
 }
 
+/// 穷举当前玩家所有合法的"主行动"（不含弃牌/选贵族续接）。
+/// 先生成候选，再用 validate_action 过滤；结果无重复且每个都通过校验。
+/// AI 与 UI 共用此单一权威入口，避免在搜索层复制规则。
+pub fn legal_actions(state: &GameState, player: PlayerId) -> Vec<PlayerAction> {
+    if state.is_over() || state.current_id() != player {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    // 拿 3 个不同普通色：所有 5 选 3 组合。
+    for a in 0..GemColor::NORMAL.len() {
+        for b in (a + 1)..GemColor::NORMAL.len() {
+            for c in (b + 1)..GemColor::NORMAL.len() {
+                candidates.push(PlayerAction::TakeThreeDifferentTokens(vec![
+                    GemColor::NORMAL[a],
+                    GemColor::NORMAL[b],
+                    GemColor::NORMAL[c],
+                ]));
+            }
+        }
+    }
+    // 拿 2 个同色：每个普通色。
+    for color in GemColor::NORMAL {
+        candidates.push(PlayerAction::TakeTwoSameTokens(color));
+    }
+    // 保留/购买：每个可见市场位置 + 每个非空牌堆 + 己方每个保留槽。
+    for level in CardLevel::ALL {
+        for idx in 0..state.market.visible(level).len() {
+            candidates.push(PlayerAction::ReserveVisibleCard { level, idx });
+            candidates.push(PlayerAction::BuyVisibleCard { level, idx });
+        }
+        candidates.push(PlayerAction::ReserveDeckCard(level));
+    }
+    for idx in 0..state.player(player).reserved_cards.len() {
+        candidates.push(PlayerAction::BuyReservedCard(idx));
+    }
+
+    candidates
+        .into_iter()
+        .filter(|action| validate_action(state, player, action).is_ok())
+        .collect()
+}
+
 pub fn resume(
     state: &mut GameState,
     player: PlayerId,
@@ -578,6 +621,34 @@ mod tests {
         let r2 = resume(&mut g, 0, Resume::ChooseNoble(50)).unwrap();
         assert!(matches!(r2.outcome, ActionOutcome::Complete));
         assert!(g.player(0).nobles.contains(&50));
+    }
+
+    #[test]
+    fn legal_actions_are_unique_and_validate() {
+        let game = game2();
+        let actions = legal_actions(&game, 0);
+        assert!(!actions.is_empty());
+        for (index, action) in actions.iter().enumerate() {
+            assert!(validate_action(&game, 0, action).is_ok(), "{action:?}");
+            assert!(!actions[..index].contains(action), "duplicate {action:?}");
+        }
+    }
+
+    #[test]
+    fn initial_game_lists_token_and_reserve_choices() {
+        let game = game2();
+        let actions = legal_actions(&game, 0);
+        assert!(actions.contains(&PlayerAction::TakeThreeDifferentTokens(vec![
+            GemColor::White,
+            GemColor::Blue,
+            GemColor::Green,
+        ])));
+        assert!(actions.contains(&PlayerAction::TakeTwoSameTokens(GemColor::Red)));
+        assert!(actions.contains(&PlayerAction::ReserveVisibleCard {
+            level: CardLevel::Level3,
+            idx: 3,
+        }));
+        assert!(actions.contains(&PlayerAction::ReserveDeckCard(CardLevel::Level2)));
     }
 
     #[test]
