@@ -454,6 +454,24 @@ fn final_noble_candidates(outcome: &ActionOutcome) -> Option<Vec<NobleId>> {
     }
 }
 
+/// 人类玩家固定为 0 号位（人 vs CPU 对局）。
+const HUMAN_PLAYER: PlayerId = 0;
+
+/// `viewer` 能否看到 `owner` 的某张保留牌：自己是 owner，或该牌来自市场（公开）。
+/// 盲抽保留牌只对持有者可见，对其他人（包括人类观察 CPU）显示牌背。
+fn reservation_face_visible(viewer: PlayerId, owner: PlayerId, reserved: ReservedCard) -> bool {
+    viewer == owner || reserved.is_public()
+}
+
+/// 玩家角色标签：0 号是"YOU"，其余是"CPU"。
+fn player_label(player: PlayerId) -> &'static str {
+    if player == HUMAN_PLAYER {
+        "YOU"
+    } else {
+        "CPU"
+    }
+}
+
 fn setup_battle(mut commands: Commands) {
     let seed = now_seed();
     let state = GameState::new_seeded(PLAYER_COUNT, seed).expect("2-4 player game always valid");
@@ -586,7 +604,7 @@ fn spawn_player_panel(parent: &mut ChildSpawnerCommands, player: PlayerId) {
                 })
                 .with_children(|header| {
                     header.spawn((
-                        Text::new(format!("PLAYER {}", player + 1)),
+                        Text::new(format!("{} (P{})", player_label(player), player + 1)),
                         TextFont { font_size: 15.0, ..default() },
                         TextColor(CREAM),
                     ));
@@ -725,7 +743,7 @@ fn spawn_compact_panels(parent: &mut ChildSpawnerCommands, model: &BattleModel) 
                 ))
                 .with_children(|panel| {
                     panel.spawn((
-                        Text::new(format!("P{} — 0 PTS", pid + 1)),
+                        Text::new(format!("{} — 0 PTS", player_label(pid))),
                         TextFont { font_size: 12.0, ..default() },
                         TextColor(CREAM),
                         PlayerScoreText(pid),
@@ -2401,9 +2419,20 @@ fn refresh_battle_ui(
                 TextColor(MUTED.with_alpha(0.7)),
             ));
             for (i, reserved) in p.reserved_cards.iter().copied().enumerate() {
-                if let Some(card) = model.0.card_store.get(reserved.card_id) {
-                    let is_owner = row.0 == model.0.current_id();
-                    spawn_reserved_card_mini(row_c, *card, row.0, i, is_owner);
+                let face_visible = reservation_face_visible(HUMAN_PLAYER, row.0, reserved);
+                if face_visible {
+                    if let Some(card) = model.0.card_store.get(reserved.card_id) {
+                        // 仅人类自己的保留牌才挂可点击按钮；他人公开保留牌只展示。
+                        let is_owner = row.0 == HUMAN_PLAYER;
+                        spawn_reserved_card_mini(row_c, *card, row.0, i, is_owner);
+                    }
+                } else {
+                    // 对手盲抽：渲染牌背，不查 card_id（公平隐藏信息）。
+                    let level = match reserved.origin {
+                        ReserveOrigin::BlindDeck(level) => level,
+                        ReserveOrigin::Market => continue,
+                    };
+                    spawn_reserved_card_back(row_c, level);
                 }
             }
         });
@@ -2467,6 +2496,38 @@ fn spawn_reserved_card_mini(
             TextColor(GOLD_BRIGHT),
         ));
     });
+}
+
+/// 渲染保留牌的牌背：与 `spawn_reserved_card_mini` 同尺寸（70×44），但不查 `card_id`。
+/// 仅展示 `HIDDEN L{level}`，确保对手盲抽保留牌对人类观察者完全脱敏。
+fn spawn_reserved_card_back(parent: &mut ChildSpawnerCommands, level: CardLevel) {
+    parent
+        .spawn((
+            Node {
+                width: px(70),
+                height: px(44),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(5)),
+                ..default()
+            },
+            BackgroundColor(MUTED.with_alpha(0.12)),
+            BorderColor::all(MUTED.with_alpha(0.5)),
+        ))
+        .with_children(|c| {
+            let label = match level {
+                CardLevel::Level1 => "HIDDEN L1",
+                CardLevel::Level2 => "HIDDEN L2",
+                CardLevel::Level3 => "HIDDEN L3",
+            };
+            c.spawn((
+                Text::new(label),
+                TextFont { font_size: 8.0, ..default() },
+                TextColor(MUTED),
+            ));
+        });
 }
 
 /// GemColor(普通) -> CardColor 反查（用于 bonus.get(CardColor)）。
@@ -2708,5 +2769,24 @@ mod tests {
     fn routed_outcome_preserves_pending_choice() {
         let route = route_outcome(ActionOutcome::NeedDiscardTokens { excess: 2 });
         assert_eq!(route, Some(BattlePhase::AwaitDiscard { excess: 2 }));
+    }
+
+    #[test]
+    fn human_cannot_see_cpu_blind_reservation() {
+        let blind = ReservedCard::new(5, ReserveOrigin::BlindDeck(CardLevel::Level1));
+        assert!(!reservation_face_visible(0, 1, blind));
+        assert!(reservation_face_visible(1, 1, blind));
+    }
+
+    #[test]
+    fn market_reservation_remains_public() {
+        let public = ReservedCard::new(5, ReserveOrigin::Market);
+        assert!(reservation_face_visible(0, 1, public));
+    }
+
+    #[test]
+    fn player_role_labels_are_stable() {
+        assert_eq!(player_label(0), "YOU");
+        assert_eq!(player_label(1), "CPU");
     }
 }
