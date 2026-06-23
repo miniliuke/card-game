@@ -20,7 +20,7 @@ cargo run
 
 ## Computer opponent
 
-New Adventure starts a two-player game with the human as Player 1 (`YOU`) and a computer as Player 2 (`CPU`). The computer uses a hidden-information MCTS search for up to one second per action, discard, or noble choice. Blind-reserved cards remain hidden from the opponent.
+New Adventure starts a two-player game with the human as Player 1 (`YOU`) and a computer as Player 2 (`CPU`). The computer uses a hidden-information MCTS search for up to five seconds or 10,000 iterations per action, discard, or noble choice, whichever limit is reached first. Blind-reserved cards remain hidden from the opponent.
 
 AI correctness tests run with `cargo test`. The longer deterministic strength check is available with:
 

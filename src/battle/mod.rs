@@ -381,6 +381,24 @@ fn selected_tokens_action(picker: &TokenPicker, bank: TokenSet) -> Option<Player
         .then(|| PlayerAction::TakeThreeDifferentTokens(picker.selected.clone()))
 }
 
+fn select_supply_color(
+    picker: &mut TokenPicker,
+    bank: TokenSet,
+    color: GemColor,
+) -> Option<PlayerAction> {
+    if picker.selected.as_slice() == [color] && bank.get(color) >= 4 {
+        picker.selected.clear();
+        return Some(PlayerAction::TakeTwoSameTokens(color));
+    }
+    if picker.selected.len() < required_different_token_count(bank)
+        && !picker.selected.contains(&color)
+        && bank.get(color) >= 1
+    {
+        picker.selected.push(color);
+    }
+    None
+}
+
 /// 弃牌覆盖层：玩家选择归还的筹码。total 必须等于 excess。
 #[derive(Resource, Default, Clone, PartialEq, Eq, Debug)]
 struct DiscardBuffer {
@@ -1546,14 +1564,10 @@ fn mouse_actions(
 ) {
     // Supply single click -> buffer
     for (interaction, btn) in &supply {
-        if matches!(*interaction, Interaction::Pressed) {
-            let c = btn.0;
-            if picker.selected.len() < required_different_token_count(model.0.bank.tokens)
-                && !picker.selected.contains(&c)
-                && model.0.bank.tokens.get(c) >= 1
-            {
-                picker.selected.push(c);
-            }
+        if matches!(*interaction, Interaction::Pressed)
+            && let Some(action) = select_supply_color(&mut picker, model.0.bank.tokens, btn.0)
+        {
+            queue.0.push(QueuedRuleDecision::Action(action));
         }
     }
     // x2 click -> direct enqueue
@@ -2358,11 +2372,8 @@ fn keyboard_actions(
                 ));
             }
             FocusZone::Supply { color } => {
-                if picker.selected.len() < required_different_token_count(model.0.bank.tokens)
-                    && !picker.selected.contains(&color)
-                    && model.0.bank.tokens.get(color) >= 1
-                {
-                    picker.selected.push(color);
+                if let Some(action) = select_supply_color(&mut picker, model.0.bank.tokens, color) {
+                    queue.0.push(QueuedRuleDecision::Action(action));
                 }
             }
             FocusZone::SupplyX2 { color } => {
@@ -2957,6 +2968,35 @@ mod tests {
         };
 
         assert_eq!(selected_tokens_action(&picker, bank), None);
+    }
+
+    #[test]
+    fn clicking_the_same_available_color_twice_takes_two_tokens() {
+        let mut picker = TokenPicker {
+            selected: vec![GemColor::Red],
+        };
+        let bank = TokenSet {
+            red: 4,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            select_supply_color(&mut picker, bank, GemColor::Red),
+            Some(PlayerAction::TakeTwoSameTokens(GemColor::Red))
+        );
+        assert!(picker.selected.is_empty());
+    }
+
+    #[test]
+    fn clicking_an_unselected_color_adds_it_to_the_token_picker() {
+        let mut picker = TokenPicker::default();
+        let bank = TokenSet {
+            blue: 4,
+            ..Default::default()
+        };
+
+        assert_eq!(select_supply_color(&mut picker, bank, GemColor::Blue), None);
+        assert_eq!(picker.selected, vec![GemColor::Blue]);
     }
 
     #[test]

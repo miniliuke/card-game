@@ -7,6 +7,7 @@ edition = "2024"
 # Bevy 0.18 is the newest release compatible with the Rust 1.90 toolchain
 # currently installed in this workspace (Bevy 0.19 requires Rust 1.95).
 bevy = {version = "0.18.1" ,features = ["debug"] }
+wgpu = "29.0.3"
 rand = "0.9"
 
 [profile.dev]

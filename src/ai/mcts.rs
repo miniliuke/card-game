@@ -26,7 +26,7 @@ use super::determinization::{PrivateKnowledge, determinize};
 use super::observation::{AiObservation, InfoSetKey};
 use super::rollout::{fallback_decision, rollout};
 
-/// 搜索配置。`normal()` 给出 1 秒预算、10 万节点上限、60 回合 rollout。
+/// 搜索配置。`normal()` 给出 5 秒 / 1 万迭代预算、10 万节点上限、60 回合 rollout。
 #[derive(Clone, Debug)]
 pub struct MctsConfig {
     pub time_limit: Duration,
@@ -40,8 +40,8 @@ pub struct MctsConfig {
 impl MctsConfig {
     pub fn normal() -> Self {
         Self {
-            time_limit: Duration::from_secs(1),
-            iteration_limit: None,
+            time_limit: Duration::from_secs(5),
+            iteration_limit: Some(10_000),
             max_nodes: 100_000,
             max_rollout_turns: 60,
             exploration: 2.0_f32.sqrt(),
@@ -448,6 +448,14 @@ mod tests {
         let a = RootActionStat::test_action(0, 20, 0.55);
         let b = RootActionStat::test_action(1, 10, 0.95);
         assert_eq!(choose_root_action(&[a.clone(), b]), Some(a.decision));
+    }
+
+    #[test]
+    fn normal_search_uses_five_seconds_or_ten_thousand_iterations() {
+        let config = MctsConfig::normal();
+
+        assert_eq!(config.time_limit, Duration::from_secs(5));
+        assert_eq!(config.iteration_limit, Some(10_000));
     }
 
     #[test]
